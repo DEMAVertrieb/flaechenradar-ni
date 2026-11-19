@@ -1,6 +1,6 @@
 """
-FlächenRadar NI – Prüf- & Entscheidungswerkzeug für Entsiegelung & Klimaanpassung
-Version 3.0 (B2G / B2B / B2C)
+FlächenRadar NI – Digitale Flächen- & Entsiegelungsanalyse
+Version 3.1 (White-Label SaaS · B2G / B2B / B2C · Performance-optimiert)
 
 Start:  streamlit run app.py
 
@@ -23,6 +23,7 @@ import requests
 import streamlit as st
 from folium.plugins import Draw
 from fpdf import FPDF
+from shapely.geometry import mapping as _mapping
 from shapely.geometry import shape as _shape
 from streamlit_folium import st_folium
 
@@ -33,7 +34,7 @@ from gebuehren import FOERDER_KULISSE_NI, REGION_WERLTE, gebuehr
 # 0. KONFIGURATION
 # ==============================================================================
 st.set_page_config(
-    page_title="FlächenRadar NI · Prüf- & Entscheidungswerkzeug",
+    page_title="FlächenRadar NI · Flächen- & Entsiegelungsanalyse",
     page_icon="🗺️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -45,7 +46,7 @@ BEARBEITUNGS_ZIEL_STUNDEN = 24
 MINDEST_FLAECHE_M2 = 10
 BAGATELL_ZUSCHUSS_EUR = 2_000
 DE_MINIMIS_EUR = 300_000
-KARTE_MAX_FLURSTUECKE = 250
+KARTE_MAX_FLURSTUECKE = 120
 
 DEFAULT_PU_ASPHALT_EUR_M2 = 68.0
 DEFAULT_RUECKBAU_EUR_M2 = {
@@ -85,10 +86,10 @@ DEFAULT_PRECHECK_B_FL = 300
 MODUS_META = {
     "B2G": {
         "label": "Kommune (B2G)",
-        "kurz": "Kommunale Flächen- & Entsiegelungsprüfung (§ 19 NKlimaG)",
-        "titel": "Welche Flächen in Ihrem Gemeindegebiet bieten ein prüfenswertes Entsiegelungspotenzial?",
+        "kurz": "Kommunale Flächen- & Entsiegelungsanalyse (§ 19 NKlimaG)",
+        "titel": "Welche Flächen im Gemeindegebiet bieten ein prüfenswertes Entsiegelungspotenzial?",
         "hinweis": (
-            "Unterstützt Erfassung, Priorisierung und Vorlagenbildung im Kontext des Entsiegelungskatasters.NI. "
+            "Unterstützt Erfassung, Priorisierung und Vorlagenbildung auf Basis des Entsiegelungskatasters.NI. "
             "Vorläufige, nicht rechtsverbindliche Einschätzung – ersetzt keine Planung, Genehmigung oder Förderentscheidung."
         ),
         "b2b_default": True,
@@ -111,7 +112,7 @@ MODUS_META = {
         "titel": "Welche Entsiegelungs- oder Versickerungsmöglichkeiten passen zu Ihrer Fläche?",
         "hinweis": (
             "Unverbindliche Ersteinschätzung in verständlicher Sprache mit realistischem Kostenrahmen, "
-            "möglichem Förderhinweis und klaren nächsten Schritten – ohne Fachjargon."
+            "möglichem Förderhinweis und klaren nächsten Schritten."
         ),
         "b2b_default": False,
         "default_nutzung": "Hoffläche",
@@ -272,7 +273,7 @@ st.markdown(
 
 
 # ==============================================================================
-# 3. HILFSFUNKTIONEN
+# 3. HILFSFUNKTIONEN & PERFORMANCE-CACHE
 # ==============================================================================
 def zahl(x: float, nk: int = 0) -> str:
     return f"{x:,.{nk}f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -327,6 +328,42 @@ def index_fuer(gemeinde: str):
     return ek.Index(entpot(gemeinde)[0])
 
 
+@st.cache_data(show_spinner=False, max_entries=30)
+def karten_geojson(gemeinde: str, min_stufe: int, nur_b2b: bool, limit: int):
+    """Vereinfacht Geometrien nur für schnelle Kartenanzeige; Originaldaten bleiben unberührt."""
+    feats, _ = entpot(gemeinde)
+    gefiltert = [
+        f
+        for f in feats
+        if f["properties"]["Stufe"] >= min_stufe
+        and (not nur_b2b or f["properties"]["HauptTN"] in ek.B2B_NUTZUNGEN)
+    ][:limit]
+
+    leichte_features = []
+    for f in gefiltert:
+        geom = _shape(f["geometry"]).simplify(0.000015, preserve_topology=True)
+        props = f["properties"]
+        leichte_features.append(
+            {
+                "type": "Feature",
+                "geometry": _mapping(geom),
+                "properties": {
+                    "Flurstueck": props["Flurstueck"],
+                    "Nutzung": props["Nutzung"],
+                    "EntFl": props["EntFl"],
+                    "VerAnt_pct": props["VerAnt_pct"],
+                    "EntPot": props["EntPot"],
+                    "Stufe": props["Stufe"],
+                },
+            }
+        )
+    center = (52.85, 7.67)
+    if leichte_features:
+        c = _shape(leichte_features[0]["geometry"]).centroid
+        center = (c.y, c.x)
+    return {"type": "FeatureCollection", "features": leichte_features}, len(leichte_features), center
+
+
 # ==============================================================================
 # 4. KOPFZEILE, ZIELGRUPPEN-MODUS & SIDEBAR
 # ==============================================================================
@@ -353,9 +390,9 @@ st.markdown(
     f"""
 <div class="fr-top">
   <div>
-    <div class="fr-kicker">FLÄCHENRADAR NI · LANDESKATASTER &amp; VORPRÜFUNG</div>
-    <div class="fr-h1">Entsiegelungs- &amp; Klimaanpassungs-Werkzeug</div>
-    <p class="fr-lead">Prüfung, Einordnung und Vorbereitung für Kommune, Gewerbe und Privat · Beratung &amp; Koordination: DEMA Vertrieb GbR</p>
+    <div class="fr-kicker">FLÄCHENRADAR NI · DIGITALE FLÄCHENANALYSE</div>
+    <div class="fr-h1">Entsiegelungs- &amp; Klimaanpassungs-Radar</div>
+    <p class="fr-lead">Unabhängige Potenzial-, Wirtschaftlichkeits- und Entscheidungsvorbereitung für Kommune, Gewerbe und Privat</p>
   </div>
   <div class="fr-seal">
     <b>FlächenRadar-Prüfsiegel</b><br>
@@ -373,12 +410,13 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.markdown("### Kriterien der Ersteinschätzung")
+    st.markdown("### Parameter & Kriterien")
     st.caption("Schwellenwerte für Priorität A und B in Karte & Flächenübersicht")
     pc_a_stufe = st.slider("Priorität A: min. Potenzialstufe", 3, 5, DEFAULT_PRECHECK_A_STUFE, key="pc_a_stufe")
     pc_a_fl = st.number_input("Priorität A: min. Fläche (m²)", 100, 5000, DEFAULT_PRECHECK_A_FL, step=100, key="pc_a_fl")
     pc_b_stufe = st.slider("Priorität B: min. Potenzialstufe", 2, 5, DEFAULT_PRECHECK_B_STUFE, key="pc_b_stufe")
     pc_b_fl = st.number_input("Priorität B: min. Fläche (m²)", 50, 2000, DEFAULT_PRECHECK_B_FL, step=50, key="pc_b_fl")
+    max_karte = st.slider("Max. Flurstücke auf Karte (Performance)", 50, 300, KARTE_MAX_FLURSTUECKE, step=25)
     st.divider()
     st.caption("Richtwert: Priorität A ≥ Stufe 4 + ≥ 1.000 m² · Priorität B ≥ Stufe 3 + ≥ 300 m²")
 
@@ -454,12 +492,7 @@ with col1:
         )
         nur_b2b = st.toggle(filter_label, value=aktiv_modus["b2b_default"])
 
-        sicht = [
-            f
-            for f in feats
-            if f["properties"]["Stufe"] >= min_stufe
-            and (not nur_b2b or f["properties"]["HauptTN"] in ek.B2B_NUTZUNGEN)
-        ][:KARTE_MAX_FLURSTUECKE]
+        gj_karte, anzahl_sicht, default_center = karten_geojson(gemeinde, min_stufe, nur_b2b, max_karte)
 
         fs_geom = None
         if ss.flurstueck:
@@ -470,9 +503,8 @@ with col1:
         if fs_geom:
             c = _shape(fs_geom).centroid
             center, zoom = (c.y, c.x), 17
-        elif sicht:
-            c = _shape(sicht[0]["geometry"]).centroid
-            center, zoom = (c.y, c.x), 14
+        elif anzahl_sicht > 0:
+            center, zoom = default_center, 14
         else:
             center, zoom = (52.85, 7.67), 12
 
@@ -482,19 +514,18 @@ with col1:
             attr="Esri World Imagery",
             name="Luftbild (Orthophoto)",
         ).add_to(m)
-        if sicht:
+        if anzahl_sicht > 0:
             folium.GeoJson(
-                {"type": "FeatureCollection", "features": sicht},
+                gj_karte,
                 name="Landes-Entsiegelungspotenzial",
                 style_function=lambda f: {
                     "color": STUFEN_FARBE.get(f["properties"]["Stufe"], "#64748B"),
                     "weight": 1.3,
                     "fillOpacity": 0.35,
                 },
-                highlight_function=lambda f: {"weight": 3, "fillOpacity": 0.6},
                 tooltip=folium.GeoJsonTooltip(
-                    fields=["Flurstueck", "Nutzung", "EntFl", "VerAnt_pct", "EntPot", "PreCheck"],
-                    aliases=["Flurstück", "Nutzung", "Landes-Potenzial (m²)", "Versiegelt (%)", "Stufe", "Einordnung"],
+                    fields=["Flurstueck", "Nutzung", "EntFl", "VerAnt_pct", "EntPot"],
+                    aliases=["Flurstück", "Nutzung", "Landes-Potenzial (m²)", "Versiegelt (%)", "Stufe"],
                 ),
             ).add_to(m)
         folium.LayerControl(position="topright").add_to(m)
@@ -506,15 +537,15 @@ with col1:
         ).add_to(m)
 
         st.caption(
-            f"{len(sicht)} Flurstücke angezeigt (max. {KARTE_MAX_FLURSTUECKE}). "
+            f"{anzahl_sicht} Flurstücke angezeigt (max. {max_karte}). "
             "Flurstück in der Karte anklicken oder eigene Prüffläche einzeichnen."
         )
         out = st_folium(
             m,
-            height=340,
+            height=330,
             use_container_width=True,
             returned_objects=["last_object_clicked", "all_drawings"],
-            key=f"map_{gemeinde}",
+            key=f"map_{gemeinde}_{min_stufe}_{nur_b2b}",
         )
 
         klick = (out or {}).get("last_object_clicked")
@@ -590,7 +621,7 @@ g_info = gebuehr(gemeinde)
 with st.expander("Annahmen & Richtwerte offenlegen (transparente Berechnungsgrundlage)"):
     p1, p2, p3, p4 = st.columns(4)
     pu_preis = p1.number_input(
-        "Durchlässiger Belag / PU-Asphalt inkl. Einbau (€/m²)",
+        "Wasserdurchlässiger Belag inkl. Einbau (€/m²)",
         value=DEFAULT_PU_ASPHALT_EUR_M2,
         step=1.0,
     )
@@ -636,8 +667,7 @@ if gebuehr_satz <= 0:
     )
 hinweise.append("Untergrund, Leitungen, Schutzgebiete und Entwässerung müssen vor Ort bzw. fachlich geprüft werden.")
 hinweise.append(
-    "Vorläufige, unverbindliche Einschätzung – keine verbindliche Planung, Förderzusage oder Preisgarantie. "
-    "Beratung & Koordination: DEMA Vertrieb GbR; Ausführung über Fachbetriebe."
+    "Vorläufige, unverbindliche Einschätzung – keine verbindliche Planung, Förderzusage oder Preisgarantie."
 )
 
 eigenanteil = max(0.0, kosten - zuschuss)
@@ -664,7 +694,7 @@ if scan_triggered:
         "kosten": round(kosten, 2),
         "zuschuss": round(zuschuss, 2),
         "eigenanteil": round(eigenanteil, 2),
-        "quelle": "FlaechenRadar_NI_v3",
+        "quelle": "FlaechenRadar_NI_v3_1",
         "zeitstempel": ss.scan_zeit.isoformat(),
     }
     if CRM_WEBHOOK_URL:
@@ -736,7 +766,7 @@ with col2:
 <div class="next-step">
   <b>Ablauf nach der Prüfung:</b><br>
   1. Fläche &amp; Annahmen prüfen · 2. Fotos/Pläne ergänzen · 3. Vor-Ort-Check klären ·
-  4. Förder- &amp; Gebührenlage prüfen · 5. Fachbetriebskoordination · 6. Unterlagen sichern
+  4. Förder- &amp; Gebührenlage prüfen · 5. Fachplanung / Umsetzung anfragen · 6. Unterlagen sichern
 </div>
 """,
             unsafe_allow_html=True,
@@ -760,7 +790,7 @@ with col2:
 
 
 # ==============================================================================
-# 8. STEP 3 – KENNzahlen JE ZIELGRUPPE + PRÜFBERICHT (PDF)
+# 8. STEP 3 – KENNZAHLEN JE ZIELGRUPPE + PRÜFBERICHT (PDF)
 # ==============================================================================
 def _pdf_text(val) -> str:
     ersetzungen = {
@@ -899,14 +929,14 @@ def baue_pdf() -> bytes:
         "1. Fläche, Nutzung und Landesdaten mit den örtlichen Gegebenheiten abgleichen.",
         "2. Unterlagen (Fotos, Lageplan, Entwässerung/Leitungen) bei Bedarf ergänzen.",
         "3. Vor-Ort-Prüfung sowie Förder- und Gebührenlage verbindlich klären.",
-        "4. Abstimmung & Koordination über DEMA Vertrieb GbR; Ausführung über Fachbetriebe.",
+        "4. Fachliche Abstimmung und Umsetzung über zuständige Stellen bzw. zertifizierte Fachbetriebe.",
     ]:
         pdf.multi_cell(0, 5, t(schritt), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     pdf.set_font(fam, "B", 10)
     pdf.set_text_color(15, 41, 66)
-    pdf.cell(0, 7, t("5. Hinweise, Grenzen & Verortung"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t("5. Hinweise, Grenzen & Datenquellen"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(fam, "", 8.5)
     pdf.set_text_color(100, 116, 139)
     for h in hinweise:
@@ -917,8 +947,8 @@ def baue_pdf() -> bytes:
         t(
             f"Katasterquelle: {ek.QUELLE} (downloads.entsiegelungskataster.niedersachsen.de) · "
             f"Gebührenhinweis: {g_info['hinweis']} ({g_info['quelle']}). "
-            "Ein Angebot der DEMA Vertrieb GbR (Beratung, Vorprüfung & Koordination; keine Planungs-, "
-            "Rechts- oder Förderzusage; DSGVO-konforme, zweckgebundene Datenverarbeitung)."
+            "Erstellt mit FlächenRadar NI – digitale Flächen- und Entsiegelungsanalyse. "
+            "Keine Planungs-, Rechts- oder Förderzusage; zweckgebundene Datenverarbeitung."
         ),
     )
     return bytes(pdf.output())
@@ -964,7 +994,7 @@ with col3:
             kpi(
                 "Richtwert Kalkulation",
                 f"{eur(preis_m2, 2)} / m²",
-                f"{zahl(flaeche)} m² · {belag} → durchlässiger Belag",
+                f"{zahl(flaeche)} m² · {belag} → wasserdurchlässiger Belag",
             )
         else:
             kpi(
@@ -1152,11 +1182,11 @@ with st.container(key="card4"):
 
 st.markdown(
     f"""<div class="fr-foot">
-<b>FlächenRadar NI</b> · Ein Angebot der <b>DEMA Vertrieb GbR</b> (Beratung, Vorprüfung &amp; Koordination; Ausführung über Fachbetriebe).<br>
+<b>FlächenRadar NI</b> · Digitale Flächen-, Entsiegelungs- &amp; Wirtschaftlichkeitsanalyse.<br>
 Unverbindliche, vorläufige Einschätzung – keine verbindliche Planung, Baugenehmigung, Förderzusage oder Preisgarantie.<br>
 Katastergrundlage: {ek.QUELLE} · <a href="https://downloads.entsiegelungskataster.niedersachsen.de/" target="_blank">Entsiegelungskataster.NI</a> ·
 Gebührenstand: 11.10.2026 (im Parameterbereich anpassbar).<br>
-Kriterien (aktuell): Priorität A ≥ Stufe {pc_a_stufe} + ≥ {zahl(pc_a_fl)} m² · Priorität B ≥ Stufe {pc_b_stufe} + ≥ {zahl(pc_b_fl)} m².<br>
+Kriterien (aktuell): Priorität A ≥ Stufe {pc_a_stufe} + ≥ {zahl(pc_a_fl)} m² · Priorität B ≥ Stufe {pc_b_stufe} + ≥ {zahl(pc_b_fl)} m².
 Datenschutz: Eingaben und Uploads werden zweckgebunden zur Prüfung verwendet.
 </div>""",
     unsafe_allow_html=True,
