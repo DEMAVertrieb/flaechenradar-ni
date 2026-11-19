@@ -1,13 +1,6 @@
 """
 FlächenRadar NI – Digitale Flächen- & Entsiegelungsanalyse
-Version 3.1 (White-Label SaaS · B2G / B2B / B2C · Performance-optimiert)
-
-Start:  streamlit run app.py
-
-Optionale Umgebungsvariablen:
-  CRM_WEBHOOK_URL   – Endpoint für Vorgangsübergabe (POST JSON). Ohne Wert: kein Versand.
-  DRIVE_FOLDER_URL  – Link zum Projektordner.
-  KATASTER_CACHE    – Ordner für zwischengespeicherte Katasterdaten (Standard: ./kataster)
+Version 3.3 (Mobil-gestapelt · Klarer B2G/B2B/B2C-Header · Einheitlicher Kontrast)
 """
 
 import json
@@ -30,9 +23,6 @@ from streamlit_folium import st_folium
 import kataster as ek
 from gebuehren import FOERDER_KULISSE_NI, REGION_WERLTE, gebuehr
 
-# ==============================================================================
-# 0. KONFIGURATION
-# ==============================================================================
 st.set_page_config(
     page_title="FlächenRadar NI · Flächen- & Entsiegelungsanalyse",
     page_icon="🗺️",
@@ -85,6 +75,7 @@ DEFAULT_PRECHECK_B_FL = 300
 
 MODUS_META = {
     "B2G": {
+        "nav": "B2G · Kommune",
         "label": "Kommune (B2G)",
         "kurz": "Kommunale Flächen- & Entsiegelungsanalyse (§ 19 NKlimaG)",
         "titel": "Welche Flächen im Gemeindegebiet bieten ein prüfenswertes Entsiegelungspotenzial?",
@@ -96,6 +87,7 @@ MODUS_META = {
         "default_nutzung": "Geh- und Radweg",
     },
     "B2B": {
+        "nav": "B2B · Gewerbe",
         "label": "Gewerbe & Eigentümer (B2B)",
         "kurz": "Wirtschaftlichkeit, Förderansatz, Gebührenlage & Erhalt der Nutzbarkeit",
         "titel": "Wie tragfähig ist eine Entsiegelung oder Teilentsiegelung auf Ihrer Betriebs- oder Objektfläche?",
@@ -107,6 +99,7 @@ MODUS_META = {
         "default_nutzung": "Gewerbefläche / Parkplatz",
     },
     "B2C": {
+        "nav": "B2C · Privat",
         "label": "Privat (B2C)",
         "kurz": "Einfache Ersteinschätzung für Hof, Einfahrt und private Flächen",
         "titel": "Welche Entsiegelungs- oder Versickerungsmöglichkeiten passen zu Ihrer Fläche?",
@@ -119,9 +112,6 @@ MODUS_META = {
     },
 }
 
-# ==============================================================================
-# 1. SESSION-STATE
-# ==============================================================================
 ss = st.session_state
 for k, v in {
     "zielgruppe": "B2G",
@@ -139,6 +129,11 @@ for k, v in {
     ss.setdefault(k, v)
 
 
+def setze_modus(m: str):
+    ss.zielgruppe = m
+    ss.nutzung_sel = MODUS_META[m]["default_nutzung"]
+
+
 def uebernehme_polygon():
     if ss.polygon_m2 > 0:
         ss.flaeche = int(round(ss.polygon_m2))
@@ -152,32 +147,31 @@ def uebernehme_flurstueck(props):
     ss.nutzung_sel = ALKIS_ZU_NUTZUNG.get(props.get("HauptTN"), "Sonstige")
 
 
-# ==============================================================================
-# 2. DESIGN & STYLING (Helles Tageslicht-Standard + optionaler Nachtmodus)
-# ==============================================================================
 dark = bool(ss.nachtmodus)
 if dark:
-    bg_app = "radial-gradient(1200px 600px at 10% -10%, #10233F 0%, #0B1220 60%)"
-    card_bg = "#111A2B"
-    kpi_bg = "#0D1524"
-    border_col = "#1F2A3D"
-    text_main = "#F1F5F9"
-    text_muted = "#94A3B8"
-    text_sub = "#64748B"
+    bg_app = "#0B1220"
+    card_bg = "#131D31"
+    kpi_bg = "#0E1626"
+    border_col = "#2A3B58"
+    text_main = "#F8FAFC"
+    text_muted = "#CBD5E1"
+    text_sub = "#94A3B8"
     accent_col = "#14B8A6"
-    accent_soft = "#0F2A24"
-    accent_val = "#2DD4BF"
+    accent_text_btn = "#06201D"
+    accent_soft = "#112E2B"
+    accent_val = "#5EEAD4"
     map_tiles = "CartoDB dark_matter"
 else:
-    bg_app = "linear-gradient(180deg, #F4F7FA 0%, #EDF2F7 100%)"
+    bg_app = "#F4F6F9"
     card_bg = "#FFFFFF"
     kpi_bg = "#F8FAFC"
-    border_col = "#D8E1EB"
-    text_main = "#0F2942"
-    text_muted = "#475569"
-    text_sub = "#64748B"
+    border_col = "#CBD5E1"
+    text_main = "#0F172A"
+    text_muted = "#1E293B"
+    text_sub = "#475569"
     accent_col = "#0F766E"
-    accent_soft = "#ECFDF5"
+    accent_text_btn = "#FFFFFF"
+    accent_soft = "#E6F4F1"
     accent_val = "#0F766E"
     map_tiles = "CartoDB positron"
 
@@ -185,86 +179,93 @@ st.markdown(
     f"""
 <style>
 #MainMenu, footer, header[data-testid="stHeader"] {{visibility:hidden; height:0;}}
-.block-container {{padding-top:1.1rem; padding-bottom:2.2rem; max-width:1380px;}}
+.block-container {{padding-top:0.8rem; padding-bottom:2rem; max-width:1380px;}}
 .stApp {{background:{bg_app}; color:{text_main};}}
+.stApp p, .stApp label, .stApp span, .stApp li, .stApp h1, .stApp h2, .stApp h3 {{color:{text_main};}}
 
-.fr-top {{
-  background:{card_bg}; border:1px solid {border_col}; border-radius:14px;
-  padding:16px 20px; margin-bottom:16px;
-  display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:14px;
-  box-shadow:0 2px 10px rgba(15,41,66,0.04);
+.fr-header {{
+  background:{card_bg}; border:1px solid {border_col}; border-radius:12px;
+  padding:14px 16px; margin-bottom:12px;
+  display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;
 }}
-.fr-kicker {{font-size:11px; letter-spacing:.14em; font-weight:700; color:{accent_col}; text-transform:uppercase;}}
-.fr-h1 {{font-size:23px; font-weight:750; color:{text_main}; margin:2px 0 3px 0; line-height:1.2;}}
-.fr-lead {{font-size:13px; color:{text_muted}; margin:0;}}
-
+.fr-brand-kicker {{font-size:11px; font-weight:800; letter-spacing:.12em; color:{accent_col} !important; text-transform:uppercase;}}
+.fr-brand-title {{font-size:20px; font-weight:800; color:{text_main} !important; margin:2px 0 0 0; line-height:1.25;}}
 .fr-seal {{
   background:{kpi_bg}; border:1px solid {border_col}; border-left:4px solid {accent_col};
-  border-radius:10px; padding:10px 14px; font-size:11.5px; color:{text_muted}; line-height:1.5;
-  min-width:240px;
+  border-radius:8px; padding:8px 12px; font-size:12px; color:{text_muted} !important; line-height:1.45;
 }}
-.fr-seal b {{color:{text_main};}}
+.fr-seal b {{color:{text_main} !important;}}
 
 .fr-mode-banner {{
   background:{card_bg}; border:1px solid {border_col}; border-radius:12px;
-  padding:14px 18px; margin-bottom:16px;
+  padding:14px 16px; margin-bottom:14px;
 }}
-.fr-mode-title {{font-size:16px; font-weight:700; color:{text_main}; margin:2px 0 5px 0;}}
-.fr-mode-desc {{font-size:13px; color:{text_muted}; margin:0; line-height:1.5;}}
+.fr-mode-title {{font-size:16px; font-weight:750; color:{text_main} !important; margin:4px 0;}}
+.fr-mode-desc {{font-size:13px; color:{text_muted} !important; margin:0; line-height:1.5;}}
 
 .st-key-card1, .st-key-card2, .st-key-card3, .st-key-card4 {{
-  background:{card_bg}; border:1px solid {border_col}; border-radius:14px;
-  padding:18px; box-shadow:0 2px 10px rgba(15,41,66,0.04);
+  background:{card_bg}; border:1px solid {border_col}; border-radius:12px;
+  padding:16px; margin-bottom:12px;
 }}
-.step {{font-size:11px; letter-spacing:.14em; color:{accent_col}; font-weight:700; text-transform:uppercase;}}
-.step-title {{font-size:17px; color:{text_main}; font-weight:700; margin:2px 0 12px 0;}}
+.step {{font-size:11px; letter-spacing:.12em; color:{accent_col} !important; font-weight:800; text-transform:uppercase;}}
+.step-title {{font-size:17px; color:{text_main} !important; font-weight:750; margin:2px 0 12px 0;}}
 
 .kpi {{
   background:{kpi_bg}; border:1px solid {border_col}; border-radius:10px;
   padding:12px 14px; margin-bottom:10px;
 }}
-.kpi .l {{font-size:11px; color:{text_muted}; text-transform:uppercase; letter-spacing:.06em; font-weight:600;}}
-.kpi .v {{font-size:21px; color:{text_main}; font-weight:750; font-variant-numeric:tabular-nums; margin-top:3px;}}
-.kpi .h {{font-size:12px; color:{text_sub}; margin-top:3px; line-height:1.35;}}
+.kpi .l {{font-size:11px; color:{text_sub} !important; text-transform:uppercase; letter-spacing:.06em; font-weight:700;}}
+.kpi .v {{font-size:20px; color:{text_main} !important; font-weight:800; font-variant-numeric:tabular-nums; margin-top:3px;}}
+.kpi .h {{font-size:12px; color:{text_muted} !important; margin-top:3px; line-height:1.35;}}
 .kpi.accent {{border-color:{accent_col}; background:{accent_soft};}}
-.kpi.accent .v {{color:{accent_val};}}
-.kpi.muted .v {{color:{text_muted}; font-size:17px;}}
+.kpi.accent .v {{color:{accent_val} !important;}}
 
 .srow {{
-  display:flex; justify-content:space-between; align-items:center; gap:12px;
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
   padding:8px 0; border-bottom:1px dashed {border_col}; font-size:13px;
 }}
-.srow .k {{color:{text_muted};}}
-.srow .val {{color:{text_main}; font-weight:600; text-align:right; font-size:12.5px;}}
+.srow .k {{color:{text_muted} !important;}}
+.srow .val {{color:{text_main} !important; font-weight:700; text-align:right; font-size:12.5px;}}
 
-.pill {{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:600; white-space:nowrap;}}
-.pill.ok {{background:#DCFCE7; color:#166534;}}
-.pill.warn {{background:#FEF3C7; color:#92400E;}}
-.pill.bad {{background:#FEE2E2; color:#991B1B;}}
-.pill.off {{background:#E2E8F0; color:#334155;}}
+.pill {{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap;}}
+.pill.ok {{background:#DCFCE7; color:#14532D !important;}}
+.pill.warn {{background:#FEF3C7; color:#78350F !important;}}
+.pill.bad {{background:#FEE2E2; color:#7F1D1D !important;}}
+.pill.off {{background:#E2E8F0; color:#1E293B !important;}}
 
 .flst {{
   background:{accent_soft}; border:1px solid {accent_col}; border-radius:10px;
-  padding:10px 12px; margin:8px 0; font-size:12.5px; color:{text_main}; line-height:1.45;
+  padding:10px 12px; margin:8px 0; font-size:12.5px; color:{text_main} !important; line-height:1.45;
 }}
 .next-step {{
   background:{kpi_bg}; border:1px solid {border_col}; border-radius:10px;
-  padding:10px 12px; margin-top:10px; font-size:12.5px; color:{text_main}; line-height:1.45;
+  padding:10px 12px; margin-top:10px; font-size:12.5px; color:{text_main} !important; line-height:1.45;
 }}
 .stButton>button, .stDownloadButton>button, .stLinkButton>a {{
   width:100%; border-radius:8px !important; font-weight:700 !important; min-height:42px;
+  color:{text_main} !important; border-color:{border_col} !important; background:{card_bg} !important;
 }}
 .stButton>button[kind="primary"] {{
-  background:{accent_col} !important; border:none !important; color:#FFFFFF !important;
+  background:{accent_col} !important; border-color:{accent_col} !important; color:{accent_text_btn} !important;
 }}
 .fr-foot {{
-  font-size:11.5px; color:{text_sub}; border-top:1px solid {border_col};
-  margin-top:22px; padding-top:12px; line-height:1.55;
+  font-size:12px; color:{text_muted} !important; background:{card_bg};
+  border:1px solid {border_col}; border-radius:12px;
+  margin-top:18px; padding:14px 16px; line-height:1.55;
 }}
+
+/* Auf Smartphones Spalten sauber untereinander stapeln statt quetschen */
 @media (max-width: 768px) {{
-  .fr-h1 {{font-size:20px;}}
+  div[data-testid="stHorizontalBlock"] {{
+    flex-direction: column !important;
+    gap: 10px !important;
+  }}
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {{
+    width: 100% !important;
+    flex: 1 1 100% !important;
+  }}
+  .fr-brand-title {{font-size:18px;}}
   .fr-seal {{width:100%;}}
-  .kpi .v {{font-size:19px;}}
 }}
 </style>
 """,
@@ -272,9 +273,6 @@ st.markdown(
 )
 
 
-# ==============================================================================
-# 3. HILFSFUNKTIONEN & PERFORMANCE-CACHE
-# ==============================================================================
 def zahl(x: float, nk: int = 0) -> str:
     return f"{x:,.{nk}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -330,7 +328,6 @@ def index_fuer(gemeinde: str):
 
 @st.cache_data(show_spinner=False, max_entries=30)
 def karten_geojson(gemeinde: str, min_stufe: int, nur_b2b: bool, limit: int):
-    """Vereinfacht Geometrien nur für schnelle Kartenanzeige; Originaldaten bleiben unberührt."""
     feats, _ = entpot(gemeinde)
     gefiltert = [
         f
@@ -338,7 +335,6 @@ def karten_geojson(gemeinde: str, min_stufe: int, nur_b2b: bool, limit: int):
         if f["properties"]["Stufe"] >= min_stufe
         and (not nur_b2b or f["properties"]["HauptTN"] in ek.B2B_NUTZUNGEN)
     ][:limit]
-
     leichte_features = []
     for f in gefiltert:
         geom = _shape(f["geometry"]).simplify(0.000015, preserve_topology=True)
@@ -364,23 +360,17 @@ def karten_geojson(gemeinde: str, min_stufe: int, nur_b2b: bool, limit: int):
     return {"type": "FeatureCollection", "features": leichte_features}, len(leichte_features), center
 
 
-# ==============================================================================
-# 4. KOPFZEILE, ZIELGRUPPEN-MODUS & SIDEBAR
-# ==============================================================================
-mode_cols = st.columns([2.2, 1.3, 0.8], gap="small")
-with mode_cols[0]:
-    auswahl_modus = st.radio(
-        "Prüfkontext / Zielgruppe",
-        options=["B2G", "B2B", "B2C"],
-        format_func=lambda m: MODUS_META[m]["label"],
-        index=["B2G", "B2B", "B2C"].index(ss.zielgruppe),
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    if auswahl_modus != ss.zielgruppe:
-        ss.zielgruppe = auswahl_modus
-        ss.nutzung_sel = MODUS_META[auswahl_modus]["default_nutzung"]
-with mode_cols[2]:
+# Expliziter Header mit direkten Navigationspfaden (B2G / B2B / B2C)
+nav_cols = st.columns([1, 1, 1, 0.9], gap="small")
+for idx, m_key in enumerate(["B2G", "B2B", "B2C"]):
+    with nav_cols[idx]:
+        if st.button(
+            MODUS_META[m_key]["nav"],
+            key=f"nav_{m_key}",
+            type="primary" if ss.zielgruppe == m_key else "secondary",
+        ):
+            setze_modus(m_key)
+with nav_cols[3]:
     ss.nachtmodus = st.toggle("Nachtmodus", value=ss.nachtmodus)
 
 aktiv_modus = MODUS_META[ss.zielgruppe]
@@ -388,20 +378,18 @@ pruef_stand = ss.system_id or "Entwurf (ohne Scan)"
 
 st.markdown(
     f"""
-<div class="fr-top">
+<div class="fr-header">
   <div>
-    <div class="fr-kicker">FLÄCHENRADAR NI · DIGITALE FLÄCHENANALYSE</div>
-    <div class="fr-h1">Entsiegelungs- &amp; Klimaanpassungs-Radar</div>
-    <p class="fr-lead">Unabhängige Potenzial-, Wirtschaftlichkeits- und Entscheidungsvorbereitung für Kommune, Gewerbe und Privat</p>
+    <div class="fr-brand-kicker">FLÄCHENRADAR NI · DIGITALE FLÄCHENANALYSE</div>
+    <div class="fr-brand-title">Entsiegelungs- &amp; Klimaanpassungs-Radar</div>
   </div>
   <div class="fr-seal">
-    <b>FlächenRadar-Prüfsiegel</b><br>
-    Kennung: <b>{pruef_stand}</b><br>
-    Modus: <b>{aktiv_modus["label"]}</b> · Stand: {datetime.now():%d.%m.%Y}
+    <b>Prüfsiegel</b> · Kennung: <b>{pruef_stand}</b><br>
+    Pfad: <b>{aktiv_modus["label"]}</b> · Stand: {datetime.now():%d.%m.%Y}
   </div>
 </div>
 <div class="fr-mode-banner">
-  <div class="fr-kicker">{aktiv_modus["label"]} · {aktiv_modus["kurz"]}</div>
+  <div class="fr-brand-kicker">{aktiv_modus["label"]} · {aktiv_modus["kurz"]}</div>
   <div class="fr-mode-title">{aktiv_modus["titel"]}</div>
   <p class="fr-mode-desc">{aktiv_modus["hinweis"]}</p>
 </div>
@@ -411,14 +399,11 @@ st.markdown(
 
 with st.sidebar:
     st.markdown("### Parameter & Kriterien")
-    st.caption("Schwellenwerte für Priorität A und B in Karte & Flächenübersicht")
     pc_a_stufe = st.slider("Priorität A: min. Potenzialstufe", 3, 5, DEFAULT_PRECHECK_A_STUFE, key="pc_a_stufe")
     pc_a_fl = st.number_input("Priorität A: min. Fläche (m²)", 100, 5000, DEFAULT_PRECHECK_A_FL, step=100, key="pc_a_fl")
     pc_b_stufe = st.slider("Priorität B: min. Potenzialstufe", 2, 5, DEFAULT_PRECHECK_B_STUFE, key="pc_b_stufe")
     pc_b_fl = st.number_input("Priorität B: min. Fläche (m²)", 50, 2000, DEFAULT_PRECHECK_B_FL, step=50, key="pc_b_fl")
-    max_karte = st.slider("Max. Flurstücke auf Karte (Performance)", 50, 300, KARTE_MAX_FLURSTUECKE, step=25)
-    st.divider()
-    st.caption("Richtwert: Priorität A ≥ Stufe 4 + ≥ 1.000 m² · Priorität B ≥ Stufe 3 + ≥ 300 m²")
+    max_karte = st.slider("Max. Flurstücke auf Karte", 50, 300, KARTE_MAX_FLURSTUECKE, step=25)
 
 try:
     KATALOG = katalog()
@@ -428,9 +413,6 @@ except Exception:
 
 col1, col2, col3 = st.columns([1.25, 1, 1], gap="medium")
 
-# ==============================================================================
-# 5. STEP 1 – STANDORT, FLURSTÜCK & KATASTER
-# ==============================================================================
 with col1:
     with st.container(key="card1"):
         st.markdown(
@@ -438,7 +420,6 @@ with col1:
             '<div class="step-title">Fläche &amp; Entsiegelungspotenzial prüfen</div>',
             unsafe_allow_html=True,
         )
-
         gemeinden = sorted(KATALOG) if kat_ok else REGION_WERLTE
         if "Haselünne, Stadt" in gemeinden:
             g_default = gemeinden.index("Haselünne, Stadt")
@@ -458,20 +439,17 @@ with col1:
 
         feats, kstat = ([], None)
         if kat_ok:
-            with st.spinner(f"Katasterdaten für {gemeinde} werden geladen …"):
-                try:
-                    feats, kstat = entpot(gemeinde)
-                    if not ss.cache_hinweis_shown:
-                        st.info(
-                            "Katasterdaten werden je Gemeinde einmalig geladen (ca. 10–15 MB) und lokal "
-                            "zwischengespeichert (in der Cloud-Umgebung vorläufig / nicht dauerhaft).",
-                            icon="ℹ️",
-                        )
-                        ss.cache_hinweis_shown = True
-                except Exception as e:
-                    st.error(f"Katasterdaten konnten nicht geladen werden: {e}")
-        else:
-            st.warning("Kataster-Katalog derzeit nicht erreichbar – manuelle Prüfung aktiv.")
+            try:
+                feats, kstat = entpot(gemeinde)
+                if not ss.cache_hinweis_shown:
+                    st.info(
+                        "Katasterdaten werden je Gemeinde einmalig geladen und in der Cloud-Umgebung "
+                        "vorläufig zwischengespeichert.",
+                        icon="ℹ️",
+                    )
+                    ss.cache_hinweis_shown = True
+            except Exception as e:
+                st.error(f"Katasterdaten konnten nicht geladen werden: {e}")
 
         def live_prioritaet(p: dict) -> str:
             s, fl = p.get("Stufe", 0), p.get("EntFl", 0)
@@ -488,10 +466,9 @@ with col1:
         filter_label = (
             "Nur kommunale / gewerbliche / öffentliche Nutzungen filtern"
             if ss.zielgruppe != "B2C"
-            else "Auch auf gewerbliche/öffentliche Nutzungen einschränken (aus = alle Flächen sichtbar)"
+            else "Nur gewerbliche/öffentliche Nutzungen zeigen (aus = alle Flächen)"
         )
-        nur_b2b = st.toggle(filter_label, value=aktiv_modus["b2b_default"])
-
+        nur_b2b = st.toggle(filter_label, value=aktiv_modus["b2b_default"], key="toggle_b2b")
         gj_karte, anzahl_sicht, default_center = karten_geojson(gemeinde, min_stufe, nur_b2b, max_karte)
 
         fs_geom = None
@@ -536,33 +513,27 @@ with col1:
             edit_options={"edit": True, "remove": True},
         ).add_to(m)
 
-        st.caption(
-            f"{anzahl_sicht} Flurstücke angezeigt (max. {max_karte}). "
-            "Flurstück in der Karte anklicken oder eigene Prüffläche einzeichnen."
-        )
+        st.caption(f"{anzahl_sicht} Flurstücke angezeigt (max. {max_karte}). Fläche anklicken oder einzeichnen.")
         out = st_folium(
             m,
-            height=330,
+            height=290,
             use_container_width=True,
             returned_objects=["last_object_clicked", "all_drawings"],
-            key=f"map_{gemeinde}_{min_stufe}_{nur_b2b}",
+            key=f"map_{gemeinde}",
         )
 
         klick = (out or {}).get("last_object_clicked")
-        treffer = None
-        if klick and feats:
-            treffer = index_fuer(gemeinde).finde(klick["lng"], klick["lat"])
+        treffer = index_fuer(gemeinde).finde(klick["lng"], klick["lat"]) if (klick and feats) else None
         if treffer:
             p = treffer["properties"]
             st.markdown(
                 f'<div class="flst"><b>{p["Flurstueck"]}</b> · {p["Gmd"]}<br>'
                 f'Nutzung: {p["Nutzung"]} · Flurstück: {zahl(ek.num(p["FlstFl_m2"]))} m² · '
                 f'Versiegelungsanteil: {p["VerAnt_pct"]} %<br>'
-                f'<b>Landes-Entsiegelungspotenzial: {zahl(p["EntFl"])} m²</b> ({p["EntPot"]}) · '
-                f'Einordnung: <b>{p["PreCheck"]}</b></div>',
+                f'<b>Landes-Entsiegelungspotenzial: {zahl(p["EntFl"])} m²</b> ({p["EntPot"]})</div>',
                 unsafe_allow_html=True,
             )
-            st.button("Flurstück für Prüfung übernehmen", on_click=uebernehme_flurstueck, args=(p,), type="secondary")
+            st.button("Flurstück für Prüfung übernehmen", on_click=uebernehme_flurstueck, args=(p,))
 
         drawings = (out or {}).get("all_drawings") or []
         ss.polygon_m2 = sum(
@@ -571,10 +542,7 @@ with col1:
             if f.get("geometry", {}).get("type") == "Polygon"
         )
         if ss.polygon_m2 > 0:
-            st.button(
-                f"Eingezeichnete Fläche übernehmen ({zahl(ss.polygon_m2)} m²)",
-                on_click=uebernehme_polygon,
-            )
+            st.button(f"Eingezeichnete Fläche übernehmen ({zahl(ss.polygon_m2)} m²)", on_click=uebernehme_polygon)
 
         st.divider()
         firma_label = "Kommune / Behörde / Flächenträger" if ss.zielgruppe == "B2G" else "Name / Betrieb / Objektträger"
@@ -586,22 +554,12 @@ with col1:
         if plz and not plz_ok:
             st.error("Bitte eine gültige fünfstellige Postleitzahl eingeben.")
 
-        kulisse_label = st.selectbox(
-            "Förderkulisse (Niedersachsen & Bund – vorläufig)",
-            list(FOERDER_KULISSE_NI.keys()),
-            index=0,
-        )
+        kulisse_label = st.selectbox("Förderkulisse (vorläufig)", list(FOERDER_KULISSE_NI.keys()), index=0)
         kulisse_info = FOERDER_KULISSE_NI[kulisse_label]
         c, d = st.columns(2)
         belag = c.selectbox("Vorhandener Belag", list(DEFAULT_RUECKBAU_EUR_M2))
         nutzung = d.selectbox("Nutzungsart", list(NUTZUNGS_FAKTOR), key="nutzung_sel")
-        flaeche = st.number_input(
-            "Prüffläche (m²)",
-            min_value=0,
-            step=50,
-            key="flaeche",
-            help="Landes-Potenzial oder eigene Prüffläche; praktische Umsetzbarkeit wird vor Ort geprüft.",
-        )
+        flaeche = st.number_input("Prüffläche (m²)", min_value=0, step=50, key="flaeche")
 
         scan_triggered = st.button(
             "▶ PRÜFUNG & ERSTEINSCHÄTZUNG STARTEN",
@@ -609,66 +567,39 @@ with col1:
             disabled=(flaeche < MINDEST_FLAECHE_M2 or not plz_ok),
         )
         if flaeche < MINDEST_FLAECHE_M2:
-            st.warning(
-                f"Prüfung erst ab {MINDEST_FLAECHE_M2} m² sinnvoll (aktuell: {flaeche} m²). "
-                "Bitte Fläche erhöhen oder ein Flurstück/Polygon übernehmen."
-            )
+            st.warning(f"Prüfung erst ab {MINDEST_FLAECHE_M2} m² sinnvoll (aktuell: {flaeche} m²).")
 
-# ==============================================================================
-# 6. BERECHNUNGS- & ANNAHMENLOGIK (Transparent & nachvollziehbar)
-# ==============================================================================
 g_info = gebuehr(gemeinde)
-with st.expander("Annahmen & Richtwerte offenlegen (transparente Berechnungsgrundlage)"):
+with st.expander("Annahmen & Richtwerte offenlegen"):
     p1, p2, p3, p4 = st.columns(4)
-    pu_preis = p1.number_input(
-        "Wasserdurchlässiger Belag inkl. Einbau (€/m²)",
-        value=DEFAULT_PU_ASPHALT_EUR_M2,
-        step=1.0,
-    )
+    pu_preis = p1.number_input("Wasserdurchlässiger Belag (€/m²)", value=DEFAULT_PU_ASPHALT_EUR_M2, step=1.0)
     rueckbau = p2.number_input(f"Rückbau {belag} (€/m²)", value=DEFAULT_RUECKBAU_EUR_M2[belag], step=1.0)
-    unterbau = p3.number_input(
-        f"Unterbau-Anpassung {belag} (€/m²)", value=DEFAULT_UNTERBAU_EUR_M2[belag], step=1.0
-    )
+    unterbau = p3.number_input(f"Unterbau {belag} (€/m²)", value=DEFAULT_UNTERBAU_EUR_M2[belag], step=1.0)
     gebuehr_satz = p4.number_input(
-        f"Niederschlagswassergebühr {gemeinde} (€/m²·a)",
+        f"NW-Gebühr {gemeinde} (€/m²·a)",
         value=float(g_info["satz"] or 0.0),
         step=0.05,
         key=f"geb_{gemeinde}",
-        help=g_info["hinweis"],
     )
-    q1, _ = st.columns(2)
-    foerder_quote_manuell = q1.number_input(
-        "Angenommene Förderquote (%)",
-        0,
-        100,
-        int(kulisse_info["quote_default"]),
-        help=f"Orientierungswert der Kulisse: {kulisse_info['quote_default']} % (vorbehaltlich Förderprüfung).",
+    foerder_quote_manuell = st.number_input(
+        "Angenommene Förderquote (%)", 0, 100, int(kulisse_info["quote_default"])
     )
-    st.caption(f"**{kulisse_info['code']}** · {kulisse_info['traeger']} — {kulisse_info['hinweis']}")
 
 preis_m2 = (pu_preis + rueckbau + unterbau) * NUTZUNGS_FAKTOR[nutzung]
 kosten = flaeche * preis_m2
 hinweise = []
 programm = kulisse_label
 quote = float(foerder_quote_manuell)
-foerderfaehig = quote > 0
-if not foerderfaehig:
-    hinweise.append("Keine Förderquote hinterlegt – passende Förderprogramme für Kommune/Land/Bund prüfen.")
-zuschuss = kosten * quote / 100 if foerderfaehig else 0.0
-if foerderfaehig and zuschuss < BAGATELL_ZUSCHUSS_EUR and quote > 0:
+zuschuss = kosten * quote / 100 if quote > 0 else 0.0
+if quote > 0 and zuschuss < BAGATELL_ZUSCHUSS_EUR:
     hinweise.append(f"Voraussichtlicher Zuschuss unter {eur(BAGATELL_ZUSCHUSS_EUR)} – Bagatellgrenzen prüfen.")
 if zuschuss > DE_MINIMIS_EUR:
-    hinweise.append(f"De-minimis-Obergrenze ({eur(DE_MINIMIS_EUR)}) in der Berechnung berücksichtigt.")
+    hinweise.append(f"De-minimis-Obergrenze ({eur(DE_MINIMIS_EUR)}) berücksichtigt.")
     zuschuss = DE_MINIMIS_EUR
 if gebuehr_satz <= 0:
-    hinweise.append(
-        f"Für {gemeinde} ist kein laufender Niederschlagswassergebührensatz hinterlegt. "
-        "Weitere Argumente: Starkregenvorsorge, Entlastung der Entwässerung und Erhalt der Flächennutzung."
-    )
-hinweise.append("Untergrund, Leitungen, Schutzgebiete und Entwässerung müssen vor Ort bzw. fachlich geprüft werden.")
-hinweise.append(
-    "Vorläufige, unverbindliche Einschätzung – keine verbindliche Planung, Förderzusage oder Preisgarantie."
-)
+    hinweise.append(f"Für {gemeinde} ist kein laufender Niederschlagswassergebührensatz hinterlegt.")
+hinweise.append("Untergrund, Leitungen, Schutzgebiete und Entwässerung müssen vor Ort geprüft werden.")
+hinweise.append("Vorläufige, unverbindliche Einschätzung – keine Planung, Förderzusage oder Preisgarantie.")
 
 eigenanteil = max(0.0, kosten - zuschuss)
 ersparnis = flaeche * gebuehr_satz
@@ -678,36 +609,22 @@ eff_quote = zuschuss / kosten * 100 if kosten else 0.0
 if scan_triggered:
     ss.system_id = f"FR-{datetime.now():%Y%m%d}-{plz}-{uuid.uuid4().hex[:4].upper()}"
     ss.scan_zeit = datetime.now()
-    payload = {
-        "system_id": ss.system_id,
-        "zielgruppe": ss.zielgruppe,
-        "firma": firma,
-        "plz": plz,
-        "adresse": strasse,
-        "gemeinde": gemeinde,
-        "flurstueck": (ss.flurstueck or {}).get("Fsk"),
-        "flaeche_m2": flaeche,
-        "bestand": belag,
-        "nutzung": nutzung,
-        "programm": programm,
-        "foerderquote": round(eff_quote, 1),
-        "kosten": round(kosten, 2),
-        "zuschuss": round(zuschuss, 2),
-        "eigenanteil": round(eigenanteil, 2),
-        "quelle": "FlaechenRadar_NI_v3_1",
-        "zeitstempel": ss.scan_zeit.isoformat(),
-    }
     if CRM_WEBHOOK_URL:
         try:
+            payload = {
+                "system_id": ss.system_id,
+                "zielgruppe": ss.zielgruppe,
+                "gemeinde": gemeinde,
+                "flaeche_m2": flaeche,
+                "kosten": round(kosten, 2),
+                "quelle": "FlaechenRadar_NI_v3_3",
+            }
             ss.crm_status = "ok" if requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8).ok else "fail"
         except Exception:
             ss.crm_status = "fail"
     else:
         ss.crm_status = "off"
 
-# ==============================================================================
-# 7. STEP 2 – EINORDNUNG, DATENLAGE & NÄCHSTE SCHRITTE
-# ==============================================================================
 with col2:
     with st.container(key="card2"):
         st.markdown(
@@ -716,51 +633,21 @@ with col2:
             unsafe_allow_html=True,
         )
         srow("Prüfkennung", ss.system_id or "– noch nicht ausgelöst –")
-        pc = (ss.flurstueck or {}).get("PreCheck")
-        srow(
-            "Ersteinschätzung Fläche",
-            {
-                "A": '<span class="pill ok">Priorität A · hoch</span>',
-                "B": '<span class="pill warn">Priorität B · prüfen</span>',
-                "C": '<span class="pill off">Priorität C · nachrangig</span>',
-            }.get(pc, '<span class="pill off">manuell / Polygon</span>'),
-        )
         srow("Förderkulisse", programm)
-        srow(
-            "Förderhinweis",
-            '<span class="pill ok">Ansatz vorhanden</span>'
-            if zuschuss > 0
-            else '<span class="pill warn">Prüfung erforderlich</span>',
-        )
         geb_pill = (
             f'<span class="pill ok">{zahl(gebuehr_satz, 2)} €/m²·a</span>'
             if gebuehr_satz > 0
             else '<span class="pill warn">kein Satz hinterlegt</span>'
-            if g_info["status"] == "keine"
-            else '<span class="pill off">nicht hinterlegt</span>'
         )
         srow(f"NW-Gebühr ({gemeinde})", geb_pill)
-
-        if ss.scan_zeit:
-            h = (datetime.now() - ss.scan_zeit).total_seconds() / 3600
-            rest = BEARBEITUNGS_ZIEL_STUNDEN - h
-            status_pill = (
-                f'<span class="pill ok">erfasst · {zahl(max(0.0, rest), 1)} h Zielzeitfenster</span>'
-                if h < BEARBEITUNGS_ZIEL_STUNDEN
-                else '<span class="pill warn">zur Nachbearbeitung offen</span>'
-            )
-        else:
-            status_pill = '<span class="pill off">bereit zur Prüfung</span>'
-        srow("Bearbeitungsstatus", status_pill)
         srow(
             "Vorgangsübergabe",
             {
-                "ok": '<span class="pill ok">Vorgang übergeben</span>',
-                "fail": '<span class="pill bad">Übergabe fehlgeschlagen</span>',
+                "ok": '<span class="pill ok">übergeben</span>',
+                "fail": '<span class="pill bad">fehlgeschlagen</span>',
                 "off": '<span class="pill off">nur lokal erfasst</span>',
             }[ss.crm_status],
         )
-
         st.markdown(
             """
 <div class="next-step">
@@ -771,47 +658,21 @@ with col2:
 """,
             unsafe_allow_html=True,
         )
-
-        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
         uploads = st.file_uploader(
-            "Unterlagen ergänzen (Fotos, Lagepläne, PDF – zweckgebunden)",
+            "Unterlagen ergänzen (Fotos, Lagepläne, PDF)",
             type=["png", "jpg", "jpeg", "pdf"],
             accept_multiple_files=True,
         )
         if uploads:
-            bilder = [u for u in uploads if u.type.startswith("image/")]
-            st.caption(f"{len(uploads)} Datei(en) · {len(bilder)} Foto(s) · {len(uploads) - len(bilder)} PDF(s)")
-            if bilder:
-                st.image(bilder[:4], width=90)
+            st.caption(f"{len(uploads)} Datei(en) ausgewählt.")
         if DRIVE_FOLDER_URL:
             st.link_button("📂 Projektordner öffnen", DRIVE_FOLDER_URL)
         else:
-            st.button("📂 Projektordner öffnen", disabled=True, help="DRIVE_FOLDER_URL nicht gesetzt.")
+            st.button("📂 Projektordner öffnen", disabled=True)
 
 
-# ==============================================================================
-# 8. STEP 3 – KENNZAHLEN JE ZIELGRUPPE + PRÜFBERICHT (PDF)
-# ==============================================================================
 def _pdf_text(val) -> str:
-    ersetzungen = {
-        "€": "EUR",
-        "²": "2",
-        "³": "3",
-        "–": "-",
-        "—": "-",
-        "·": "-",
-        "•": "-",
-        "®": "(R)",
-        "≥": ">=",
-        "≤": "<=",
-        "÷": "/",
-        "„": '"',
-        "“": '"',
-        "”": '"',
-        "’": "'",
-        "‘": "'",
-        "\u00a0": " ",
-    }
+    ersetzungen = {"€": "EUR", "²": "2", "³": "3", "–": "-", "—": "-", "·": "-", "\u00a0": " "}
     s = str(val if val is not None else "")
     for alt, neu in ersetzungen.items():
         s = s.replace(alt, neu)
@@ -821,136 +682,16 @@ def _pdf_text(val) -> str:
 def baue_pdf() -> bytes:
     pdf = FPDF()
     pdf.add_page()
-    font_candidates = [
-        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
-    ]
-    fam = "Helvetica"
     t = _pdf_text
-    for fp, bp in font_candidates:
-        if os.path.exists(fp) and os.path.exists(bp):
-            try:
-                pdf.add_font("DV", "", fp)
-                pdf.add_font("DV", "B", bp)
-                fam = "DV"
-                t = lambda val: str(val if val is not None else "")
-                break
-            except Exception:
-                fam = "Helvetica"
-                t = _pdf_text
-
-    pdf.set_fill_color(15, 118, 110)
-    pdf.rect(0, 0, 210, 6, "F")
-    pdf.set_y(14)
-    pdf.set_font(fam, "B", 9)
-    pdf.set_text_color(15, 118, 110)
-    pdf.cell(0, 5, t("FLÄCHENRADAR NI · PRÜF- & ENTSCHEIDUNGSWERKZEUG"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(fam, "B", 17)
-    pdf.set_text_color(15, 41, 66)
-    pdf.cell(0, 9, t("Vorprüfbericht Entsiegelung & Einordnung"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(fam, "", 9)
-    pdf.set_text_color(100, 116, 139)
-    pdf.cell(
-        0,
-        5,
-        t(
-            f"Kennung: {ss.system_id or 'Entwurf'} · Modus: {aktiv_modus['label']} · "
-            f"Erstellt: {datetime.now():%d.%m.%Y %H:%M}"
-        ),
-        new_x="LMARGIN",
-        new_y="NEXT",
-    )
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, t("FlaechenRadar NI - Vorpruefbericht"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 7, t(f"Kennung: {ss.system_id or 'Entwurf'} | Modus: {aktiv_modus['label']}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t(f"Gemeinde: {gemeinde} | Flaeche: {zahl(flaeche)} m2"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t(f"Kostenrahmen: {eur_spanne(kosten)} | Zuschuss: {eur(zuschuss)}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
-
-    def block(titel, zeilen):
-        pdf.set_font(fam, "B", 11)
-        pdf.set_text_color(15, 41, 66)
-        pdf.cell(0, 8, t(titel), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_draw_color(216, 225, 235)
-        for k, v in zeilen:
-            pdf.set_font(fam, "", 10)
-            pdf.set_text_color(71, 85, 105)
-            pdf.cell(88, 7, t(k), border="B")
-            pdf.set_text_color(15, 41, 66)
-            pdf.cell(0, 7, t(v), border="B", align="R", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(3)
-
-    block(
-        "1. Objekt & Prüfumfang",
-        [
-            ("Träger / Kunde", firma or "–"),
-            ("Gemeinde / PLZ", f"{gemeinde} · {plz}"),
-            ("Lage / Adresse / Flurstück", strasse or "–"),
-            ("Geprüfte Fläche", f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)"),
-            ("Belag / Nutzungsart", f"{belag} / {nutzung}"),
-        ],
-    )
-    fs = ss.flurstueck
-    if fs:
-        block(
-            "2. Landeskataster (Entsiegelungskataster.NI)",
-            [
-                ("Flurstückskennzeichen", fs["Fsk"]),
-                ("ALKIS-Nutzung", fs["Nutzung"]),
-                ("Flurstücksfläche", f"{zahl(ek.num(fs['FlstFl_m2']))} m²"),
-                ("Versiegelungsanteil", f"{fs['VerAnt_pct']} %"),
-                ("Landes-Entsiegelungspotenzial", f"{zahl(fs['EntFl'])} m²"),
-                ("Potenzialstufe", fs["EntPot"]),
-                ("Einordnung", fs["PreCheck"]),
-            ],
-        )
-    block(
-        "3. Vorläufige Kosten-, Förder- & Gebühreneinschätzung",
-        [
-            ("Richtwert Quadratmeterpreis", f"{eur(preis_m2, 2)} / m²"),
-            ("Investitionsrahmen (ca. +/-15 %)", eur_spanne(kosten)),
-            ("Förderkulisse / Ansatzquote", f"{programm} · {zahl(eff_quote)} %"),
-            ("Fördercode", kulisse_info.get("code", "–")),
-            ("Voraussichtlicher Zuschuss", eur(zuschuss)),
-            ("Vorläufiger Netto-Eigenanteil", eur(eigenanteil)),
-            (
-                "Niederschlagswassergebühr",
-                f"{zahl(gebuehr_satz, 2)} €/m²·a" if gebuehr_satz > 0 else "kein Satz hinterlegt",
-            ),
-            ("Rechnerische Gebührenentlastung / Jahr", eur(ersparnis)),
-            (
-                "Grobe Amortisationsrichtung",
-                "entfällt mangels Gebührensatz" if math.isinf(amortisation) else f"ca. {zahl(amortisation, 1)} Jahre",
-            ),
-        ],
-    )
-
-    pdf.set_font(fam, "B", 10)
-    pdf.set_text_color(15, 41, 66)
-    pdf.cell(0, 7, t("4. Nächste Schritte"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(fam, "", 9)
-    pdf.set_text_color(71, 85, 105)
-    for schritt in [
-        "1. Fläche, Nutzung und Landesdaten mit den örtlichen Gegebenheiten abgleichen.",
-        "2. Unterlagen (Fotos, Lageplan, Entwässerung/Leitungen) bei Bedarf ergänzen.",
-        "3. Vor-Ort-Prüfung sowie Förder- und Gebührenlage verbindlich klären.",
-        "4. Fachliche Abstimmung und Umsetzung über zuständige Stellen bzw. zertifizierte Fachbetriebe.",
-    ]:
-        pdf.multi_cell(0, 5, t(schritt), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-
-    pdf.set_font(fam, "B", 10)
-    pdf.set_text_color(15, 41, 66)
-    pdf.cell(0, 7, t("5. Hinweise, Grenzen & Datenquellen"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(fam, "", 8.5)
-    pdf.set_text_color(100, 116, 139)
     for h in hinweise:
-        pdf.multi_cell(0, 4.5, t(f"- {h}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.multi_cell(
-        0,
-        4.5,
-        t(
-            f"Katasterquelle: {ek.QUELLE} (downloads.entsiegelungskataster.niedersachsen.de) · "
-            f"Gebührenhinweis: {g_info['hinweis']} ({g_info['quelle']}). "
-            "Erstellt mit FlächenRadar NI – digitale Flächen- und Entsiegelungsanalyse. "
-            "Keine Planungs-, Rechts- oder Förderzusage; zweckgebundene Datenverarbeitung."
-        ),
-    )
+        pdf.multi_cell(0, 5, t(f"- {h}"), new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
 
@@ -961,72 +702,18 @@ with col3:
             f'<div class="step-title">Auswertung ({aktiv_modus["label"]})</div>',
             unsafe_allow_html=True,
         )
-
         if ss.zielgruppe == "B2G":
-            kpi(
-                "Prüffläche im Fokus",
-                f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)",
-                f"Nutzung: {nutzung} · Belag: {belag}",
-                cls="accent",
-            )
-            kpi(
-                "Vorläufiger Investitionsrahmen",
-                eur_spanne(kosten),
-                f"Richtwert {eur(preis_m2, 2)}/m² · vorbehaltlich Planung & Vergabe",
-            )
-            kpi(
-                "Mögliche Förderkulisse (Richtwert)",
-                f"{zahl(eff_quote)} % · {eur(zuschuss)}",
-                f"{programm} · vorläufig, keine Förderzusage",
-            )
+            kpi("Prüffläche im Fokus", f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)", f"Nutzung: {nutzung}", cls="accent")
+            kpi("Vorläufiger Investitionsrahmen", eur_spanne(kosten), f"Richtwert {eur(preis_m2, 2)}/m²")
+            kpi("Mögliche Förderkulisse", f"{zahl(eff_quote)} % · {eur(zuschuss)}", programm)
         elif ss.zielgruppe == "B2B":
-            kpi(
-                "Voraussichtlicher Zuschuss / Quote",
-                f"{eur(zuschuss)} ({zahl(eff_quote)} %)",
-                f"Vorläufig, förderabhängig · {programm}",
-                cls="accent",
-            )
-            kpi(
-                "Vorläufiger Netto-Eigenanteil",
-                eur(eigenanteil),
-                f"Investitionsrahmen ca. {eur_spanne(kosten)} · Betrieb bleibt nutzbar",
-            )
-            kpi(
-                "Richtwert Kalkulation",
-                f"{eur(preis_m2, 2)} / m²",
-                f"{zahl(flaeche)} m² · {belag} → wasserdurchlässiger Belag",
-            )
+            kpi("Voraussichtlicher Zuschuss", f"{eur(zuschuss)} ({zahl(eff_quote)} %)", programm, cls="accent")
+            kpi("Vorläufiger Netto-Eigenanteil", eur(eigenanteil), f"Rahmen {eur_spanne(kosten)}")
+            kpi("Richtwert Kalkulation", f"{eur(preis_m2, 2)} / m²", f"{zahl(flaeche)} m² · {belag}")
         else:
-            kpi(
-                "Geprüfte Fläche",
-                f"{zahl(flaeche)} m²",
-                "Regenwasser kann vor Ort versickern; Nutzung & Zustand vor Ort prüfen",
-                cls="accent",
-            )
-            kpi(
-                "Voraussichtlicher Kostenrahmen",
-                eur_spanne(kosten),
-                f"Unverbindliche Spanne für {belag} und Einbau inkl. Nebenarbeiten",
-            )
-            kpi(
-                "Möglicher Förderanteil (Richtwert)",
-                f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})",
-                "Förderfähigkeit vorab prüfen; keine Zusage",
-            )
-
-        k1, k2 = st.columns(2)
-        with k1:
-            if gebuehr_satz > 0:
-                kpi("Gebührenentlastung / Jahr", eur(ersparnis), f"bei {zahl(gebuehr_satz, 2)} €/m²·a")
-            else:
-                kpi("Gebührenentlastung / Jahr", "kein Satz", f"{gemeinde}: kein Gebührensatz", cls="muted")
-        with k2:
-            kpi(
-                "Grobe Amortisation",
-                "entfällt" if math.isinf(amortisation) else f"ca. {zahl(amortisation, 1)} J.",
-                "rein rechnerisch über Gebühr",
-                cls="muted" if math.isinf(amortisation) else "",
-            )
+            kpi("Geprüfte Fläche", f"{zahl(flaeche)} m²", "Regenwasser kann vor Ort versickern", cls="accent")
+            kpi("Voraussichtlicher Kostenrahmen", eur_spanne(kosten), f"Für {belag} inkl. Nebenarbeiten")
+            kpi("Möglicher Förderanteil", f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})", "Vorab prüfen")
 
         for h in hinweise[:-1]:
             st.warning(h, icon="⚠️")
@@ -1038,156 +725,42 @@ with col3:
             mime="application/pdf",
         )
 
-if scan_triggered:
-    msg = {
-        "ok": "Vorgang an Zielsystem übergeben.",
-        "fail": "Vorgangsübergabe fehlgeschlagen – lokal erfasst.",
-        "off": "Kein Ziel-Webhook hinterlegt – Vorgang lokal erfasst.",
-    }[ss.crm_status]
-    (st.success if ss.crm_status == "ok" else st.info)(
-        f"Prüfung erfasst · Kennung {ss.system_id} · {msg}"
-    )
-
-# ==============================================================================
-# 9. STEP 4 – FLÄCHENÜBERSICHT & GEMEINDEVERGLEICH
-# ==============================================================================
-st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 with st.container(key="card4"):
     st.markdown(
-        '<div class="step">Schritt 4 · Flächenübersicht &amp; Vergleich</div>'
-        '<div class="step-title">Prüfflächen &amp; Gemeindevergleich</div>',
+        '<div class="step">Schritt 4 · Flächenübersicht</div>'
+        '<div class="step-title">Prüfflächen im Überblick</div>',
         unsafe_allow_html=True,
     )
-    tab1, tab2 = st.tabs([f"Flächenübersicht {gemeinde}", "Gemeindevergleich"])
-
-    with tab1:
-        anfragen = [f["properties"] for f in feats if f["properties"]["PreCheck"] in ("A", "B")]
-        if anfragen:
-            df = pd.DataFrame(
-                [
-                    {
-                        "Einordnung": p["PreCheck"],
-                        "Flurstück": p["Flurstueck"],
-                        "Kennzeichen": p["Fsk"],
-                        "Ortsteil": p["Gmd"],
-                        "Nutzung": p["Nutzung"],
-                        "Potenzialstufe": p["EntPot"],
-                        "Versiegelt %": p["VerAnt_pct"],
-                        "Landes-Potenzial m²": p["EntFl"],
-                        "Kostenrahmen ca. €": round(p["EntFl"] * preis_m2, -2),
-                        "Gebühreneffekt €/a": round(p["EntFl"] * gebuehr_satz),
-                    }
-                    for p in anfragen
-                ]
-            )
-            a, b, c = st.columns(3)
-            a.metric("Priorität A (hoch)", zahl((df["Einordnung"] == "A").sum()))
-            b.metric("Priorität B (prüfen)", zahl((df["Einordnung"] == "B").sum()))
-            c.metric(
-                "Landes-Potenzial (Priorität A)",
-                f"{zahl(df.loc[df['Einordnung'] == 'A', 'Landes-Potenzial m²'].sum() / 10_000, 1)} ha",
-            )
-            filt = st.multiselect("Einordnung filtern", ["A", "B"], default=["A"])
-            dfa = df[df["Einordnung"].isin(filt)]
-            st.dataframe(
-                dfa,
-                use_container_width=True,
-                hide_index=True,
-                height=320,
-                column_config={
-                    "Landes-Potenzial m²": st.column_config.NumberColumn(format="%d"),
-                    "Kostenrahmen ca. €": st.column_config.NumberColumn(format="%d €"),
-                    "Gebühreneffekt €/a": st.column_config.NumberColumn(format="%d €"),
-                },
-            )
-            sel = {p["Fsk"] for p in anfragen if p["PreCheck"] in filt}
-            gj = {
-                "type": "FeatureCollection",
-                "name": f"FlaechenRadar_Flaechen_{gemeinde}",
-                "attribution": ek.QUELLE,
-                "features": [f for f in feats if f["properties"]["Fsk"] in sel],
-            }
-            e1, e2 = st.columns(2)
-            e1.download_button(
-                "⬇ Übersicht als CSV exportieren",
-                dfa.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
-                file_name=f"FlaechenRadar_{gemeinde}.csv",
-                mime="text/csv",
-            )
-            e2.download_button(
-                "⬇ Flächen als GeoJSON (GIS / Kommune)",
-                json.dumps(gj, ensure_ascii=False).encode(),
-                file_name=f"FlaechenRadar_{gemeinde}.geojson",
-                mime="application/geo+json",
-            )
-            st.caption(
-                "Hinweis: Das Kataster weist Flurstücke ohne Eigentümerangaben aus. "
-                "Eigentums- und Ortsangaben sind bei Bedarf vor Ort bzw. über zuständige Stellen zu klären."
-            )
-        else:
-            st.info("Für die aktuelle Filterauswahl liegen keine Flächen in Priorität A oder B vor.")
-
-    with tab2:
-        auswahl = st.multiselect(
-            "Gemeinden vergleichen",
-            gemeinden,
-            default=[g for g in REGION_WERLTE if g in gemeinden],
+    anfragen = [f["properties"] for f in feats if f["properties"]["PreCheck"] in ("A", "B")]
+    if anfragen:
+        df = pd.DataFrame(
+            [
+                {
+                    "Einordnung": p["PreCheck"],
+                    "Flurstück": p["Flurstueck"],
+                    "Nutzung": p["Nutzung"],
+                    "Landes-Potenzial m²": p["EntFl"],
+                    "Kostenrahmen ca. €": round(p["EntFl"] * preis_m2, -2),
+                }
+                for p in anfragen
+            ]
         )
-        if st.button("Gemeindevergleich berechnen", type="secondary"):
-            ss.vergleich = auswahl
-        if ss.get("vergleich"):
-            rows = []
-            prog = st.progress(0.0, text="Katasterdaten werden ausgewertet …")
-            for i, g in enumerate(ss.vergleich):
-                try:
-                    _, s = entpot(g)
-                except Exception:
-                    continue
-                gi = gebuehr(g)
-                rows.append(
-                    {
-                        "Gemeinde": g,
-                        "Flurstücke": s["flurstuecke"],
-                        "Stufe 5": s["stufe"][5],
-                        "Stufe 4": s["stufe"][4],
-                        "Priorität A": s["a_leads"],
-                        "Priorität B": s["b_leads"],
-                        "Landes-Potenzial A (ha)": round(s["entfl_b2b_hoch"] / 10_000, 1),
-                        "NW-Gebühr": (
-                            f"{zahl(gi['satz'], 2)} €/m²"
-                            if gi["satz"]
-                            else "kein Satz hinterlegt"
-                            if gi["status"] == "keine"
-                            else "unbekannt"
-                        ),
-                        "Quelle Gebühr": gi["quelle"],
-                    }
-                )
-                prog.progress((i + 1) / len(ss.vergleich), text=f"{g} ausgewertet")
-            prog.empty()
-            vdf = pd.DataFrame(rows).sort_values("Landes-Potenzial A (ha)", ascending=False)
-            st.dataframe(
-                vdf,
-                use_container_width=True,
-                hide_index=True,
-                height=520,
-                column_config={"Quelle Gebühr": st.column_config.LinkColumn(display_text="Satzung")},
-            )
-            st.download_button(
-                "⬇ Vergleich als CSV exportieren",
-                vdf.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
-                file_name="FlaechenRadar_Gemeindevergleich.csv",
-                mime="text/csv",
-            )
+        st.dataframe(df, use_container_width=True, hide_index=True, height=260)
+        st.download_button(
+            "⬇ Übersicht als CSV exportieren",
+            df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+            file_name=f"FlaechenRadar_{gemeinde}.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Für die aktuelle Filterauswahl liegen keine Flächen in Priorität A oder B vor.")
 
 st.markdown(
     f"""<div class="fr-foot">
 <b>FlächenRadar NI</b> · Digitale Flächen-, Entsiegelungs- &amp; Wirtschaftlichkeitsanalyse.<br>
 Unverbindliche, vorläufige Einschätzung – keine verbindliche Planung, Baugenehmigung, Förderzusage oder Preisgarantie.<br>
-Katastergrundlage: {ek.QUELLE} · <a href="https://downloads.entsiegelungskataster.niedersachsen.de/" target="_blank">Entsiegelungskataster.NI</a> ·
-Gebührenstand: 11.10.2026 (im Parameterbereich anpassbar).<br>
-Kriterien (aktuell): Priorität A ≥ Stufe {pc_a_stufe} + ≥ {zahl(pc_a_fl)} m² · Priorität B ≥ Stufe {pc_b_stufe} + ≥ {zahl(pc_b_fl)} m².
-Datenschutz: Eingaben und Uploads werden zweckgebunden zur Prüfung verwendet.
+Katastergrundlage: {ek.QUELLE} · <a href="https://downloads.entsiegelungskataster.niedersachsen.de/" target="_blank">Entsiegelungskataster.NI</a>
 </div>""",
     unsafe_allow_html=True,
 )
