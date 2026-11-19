@@ -1,6 +1,6 @@
 """
 FlächenRadar NI – Digitale Flächen- & Entsiegelungsanalyse
-Version 3.4 (Förderrichtlinien NI Nov 2026 · KfW 444 / NBank / KliKoNi · Mobil-gestapelt)
+Version 3.5 (Entscheidungsmatrix Förderkulissen · Robuster Selectbox-Sync · Max-Kosten-Warnung)
 """
 
 import json
@@ -75,9 +75,9 @@ DEFAULT_PRECHECK_B_FL = 300
 
 KULISSE_KEYS = list(FOERDER_KULISSE_NI.keys())
 DEFAULT_KULISSE_MODUS = {
-    "B2G": KULISSE_KEYS[0],   # KfW 444 NKK – Modul D.2 (50 %)
-    "B2B": KULISSE_KEYS[-1],  # Kein Landesprogramm / Lokale Prüfung (0 %)
-    "B2C": KULISSE_KEYS[-1],  # Kein Landesprogramm / Lokale Prüfung (0 %)
+    "B2G": KULISSE_KEYS[0],
+    "B2B": KULISSE_KEYS[-1],
+    "B2C": KULISSE_KEYS[-1],
 }
 
 MODUS_META = {
@@ -368,7 +368,6 @@ def karten_geojson(gemeinde: str, min_stufe: int, nur_b2b: bool, limit: int):
     return {"type": "FeatureCollection", "features": leichte_features}, len(leichte_features), center
 
 
-# Expliziter Header mit direkten Navigationspfaden (B2G / B2B / B2C)
 nav_cols = st.columns([1, 1, 1, 0.9], gap="small")
 for idx, m_key in enumerate(["B2G", "B2B", "B2C"]):
     with nav_cols[idx]:
@@ -565,6 +564,7 @@ with col1:
         kulisse_label = st.selectbox(
             "Förderkulisse (Stand Nov. 2026 – vorläufig)",
             KULISSE_KEYS,
+            index=KULISSE_KEYS.index(ss.kulisse_sel) if ss.kulisse_sel in KULISSE_KEYS else 0,
             key="kulisse_sel",
         )
         kulisse_info = FOERDER_KULISSE_NI[kulisse_label]
@@ -599,7 +599,7 @@ with st.expander("Annahmen, Förderquote & Richtwerte offenlegen"):
         100,
         int(kulisse_info["quote_default"]),
         key=f"quote_{kulisse_info['code']}",
-        help=f"Regelförderung der Kulisse: {kulisse_info['quote_default']} % (max. {kulisse_info['quote_max']} %).",
+        help=f"Regelförderung: {kulisse_info['quote_default']} % (max. {kulisse_info['quote_max']} %; z. B. 80 % bei Finanzschwäche).",
     )
     st.info(f"**{kulisse_info['code']}** · {kulisse_info['traeger']}: {kulisse_info['hinweis']}")
 
@@ -612,12 +612,14 @@ zuschuss = kosten * quote / 100 if quote > 0 else 0.0
 max_k = kulisse_info.get("max_kosten_eur")
 if max_k and kosten > max_k and quote > 0:
     zuschuss = max_k * quote / 100
-    hinweise.append(f"Förderfähige Kosten auf Programm-Obergrenze ({eur(max_k)}) gedeckelt.")
+    hinweise.append(
+        f"Förderfähige Kosten ({eur(kosten)}) übersteigen die Programm-Obergrenze ({eur(max_k)}) – Zuschuss auf {eur(max_k)} Basis gedeckelt."
+    )
 
 if "KfW 444" in kulisse_info["code"]:
     hinweise.append(
         "KfW 444 Pflichtkriterien: Vollständige Entkopplung von der Kanalisation (Versickerung vor Ort), "
-        "keine Altlastensanierung als Hauptzweck, Antrag zwingend vor Maßnahmenbeginn (Frist: 31.12.2026)."
+        "Bodenarbeiten nach DIN 18915 / DIN 19731, keine Altlastensanierung als Hauptzweck, Antrag zwingend vor Maßnahmenbeginn (Frist: 31.12.2026)."
     )
 elif "KliKoNi" in kulisse_info["code"]:
     hinweise.append("KliKoNi (2026–2028) befindet sich in Ausarbeitung – Fördersätze nach Richtlinienstart prüfen.")
@@ -658,7 +660,7 @@ if scan_triggered:
                 "programm": kulisse_info["code"],
                 "kosten": round(kosten, 2),
                 "zuschuss": round(zuschuss, 2),
-                "quelle": "FlaechenRadar_NI_v3_4",
+                "quelle": "FlaechenRadar_NI_v3_5",
             }
             ss.crm_status = "ok" if requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8).ok else "fail"
         except Exception:
@@ -697,6 +699,40 @@ with col2:
             st.link_button("🔗 KfW 444 (NKK)", "https://www.kfw.de/inlandsfoerderung/%C3%96ffentliche-Einrichtungen/Energetische-Stadtsanierung/F%C3%B6rderprodukte/Nat%C3%BCrlicher-Klimaschutz-in-Kommunen-(444)/")
         with l2:
             st.link_button("🔗 NBank & KEAN", "https://www.nbank.de/")
+
+        with st.expander("Entscheidungsmatrix: Wann welche Förderung?"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Situation": "Kommunale Maßnahme (Bau)",
+                            "Empfohlene Kulisse": "KfW 444 Modul D.2",
+                            "Quote": "50–80 %",
+                            "Wichtigster Hinweis": "Entkopplung + DIN 18915 Pflicht",
+                        },
+                        {
+                            "Situation": "Nur Konzept / Priorisierung",
+                            "Empfohlene Kulisse": "KfW 444 Modul D.1 oder NBank",
+                            "Quote": "50–90 %",
+                            "Wichtigster Hinweis": "Keine Bauinvestition",
+                        },
+                        {
+                            "Situation": "Private / gewerbliche Fläche",
+                            "Empfohlene Kulisse": "Kein Landesprogramm",
+                            "Quote": "0 %",
+                            "Wichtigster Hinweis": "Lokale Klimafonds prüfen",
+                        },
+                        {
+                            "Situation": "Ab 2027 (kommunal)",
+                            "Empfohlene Kulisse": "KliKoNi (in Vorbereitung)",
+                            "Quote": "offen",
+                            "Wichtigster Hinweis": "Richtlinie abwarten",
+                        },
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
         st.markdown(
             """

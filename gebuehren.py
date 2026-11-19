@@ -15,7 +15,6 @@ REGION_WERLTE = [
     "Haselünne, Stadt",
 ]
 
-# Strukturierte Förderkulisse (Stand November 2026)
 FOERDER_KULISSE_NI = {
     "KfW 444 NKK – Modul D.2: Entsiegelung & Bodenfunktion (Kommune)": {
         "code": "KfW 444 · Modul D.2",
