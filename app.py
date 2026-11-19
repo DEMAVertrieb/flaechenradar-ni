@@ -594,21 +594,40 @@ with col2:
 # ==============================================================================
 # 8. STEP 3 – FINANCIAL ENGINEERING + PDF
 # ==============================================================================
+def _pdf_text(val) -> str:
+    ersetzungen = {
+        "€": "EUR", "²": "2", "³": "3",
+        "–": "-", "—": "-", "·": "-", "•": "-",
+        "®": "(R)", "≥": ">=", "≤": "<=", "÷": "/",
+        "„": '"', "“": '"', "”": '"', "’": "'", "‘": "'",
+        "\u00a0": " ",
+    }
+    s = str(val if val is not None else "")
+    for alt, neu in ersetzungen.items():
+        s = s.replace(alt, neu)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
 def baue_pdf() -> bytes:
     pdf = FPDF()
     pdf.add_page()
-    # Font-Fallback für Streamlit Cloud / unterschiedliche Umgebungen
     font_candidates = [
         ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
         ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
     ]
-    fam, t = "Helvetica", (lambda s: s.replace("€", "EUR").replace("®", "(R)").replace("–", "-").replace("·", "-"))
+    fam = "Helvetica"
+    t = _pdf_text
     for fp, bp in font_candidates:
         if os.path.exists(fp) and os.path.exists(bp):
-            pdf.add_font("DV", "", fp)
-            pdf.add_font("DV", "B", bp)
-            fam, t = "DV", (lambda s: s)
-            break
+            try:
+                pdf.add_font("DV", "", fp)
+                pdf.add_font("DV", "B", bp)
+                fam = "DV"
+                t = lambda val: str(val if val is not None else "")
+                break
+            except Exception:
+                fam = "Helvetica"
+                t = _pdf_text
 
     pdf.set_fill_color(16, 185, 129)
     pdf.rect(0, 0, 210, 6, "F")
@@ -638,9 +657,9 @@ def baue_pdf() -> bytes:
         for k, v in zeilen:
             pdf.set_font(fam, "", 10)
             pdf.set_text_color(71, 85, 105)
-            pdf.cell(80, 7, t(k), border="B")
+            pdf.cell(85, 7, t(k), border="B")
             pdf.set_text_color(15, 23, 42)
-            pdf.cell(0, 7, t(str(v)), border="B", align="R", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 7, t(v), border="B", align="R", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
     block(
@@ -693,7 +712,7 @@ def baue_pdf() -> bytes:
     pdf.set_font(fam, "", 9)
     pdf.set_text_color(71, 85, 105)
     for h in hinweise:
-        pdf.multi_cell(0, 5, t(f"• {h}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 5, t(f"- {h}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     pdf.set_font(fam, "", 8)
     pdf.set_text_color(148, 163, 184)
@@ -701,13 +720,12 @@ def baue_pdf() -> bytes:
         0,
         4,
         t(
-            "Unverbindliche Vorabschätzung auf Basis von Musterwerten – keine Förderzusage, kein Angebot. "
+            "Unverbindliche Vorabschätzung auf Basis von Musterwerten - keine Förderzusage, kein Angebot. "
             f"Katasterdaten: {ek.QUELLE} (downloads.entsiegelungskataster.niedersachsen.de). "
             f"Gebührenangabe: {g_info['hinweis']} {g_info['quelle']}"
         ),
     )
     return bytes(pdf.output())
-
 
 with col3:
     with st.container(key="card3"):
