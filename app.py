@@ -1,6 +1,6 @@
 """
 FlächenRadar NI – Digitale Flächen- & Entsiegelungsanalyse
-Version 3.5 (Entscheidungsmatrix Förderkulissen · Robuster Selectbox-Sync · Max-Kosten-Warnung)
+Version 3.7 (Session-State-Migration & Crash-Schutz · Entscheidungsmatrix · Flächenübersicht & Gemeindevergleich · Score)
 """
 
 import json
@@ -133,8 +133,17 @@ for k, v in {
     "nutzung_sel": "Geh- und Radweg",
     "kulisse_sel": DEFAULT_KULISSE_MODUS["B2G"],
     "cache_hinweis_shown": False,
+    "vergleich": None,
 }.items():
     ss.setdefault(k, v)
+
+# Alte oder ungültige Session-State-Werte aus früheren Versionen bereinigen
+if ss.zielgruppe not in MODUS_META:
+    ss.zielgruppe = "B2G"
+if ss.nutzung_sel not in NUTZUNGS_FAKTOR:
+    ss.nutzung_sel = MODUS_META[ss.zielgruppe]["default_nutzung"]
+if ss.kulisse_sel not in FOERDER_KULISSE_NI:
+    ss.kulisse_sel = DEFAULT_KULISSE_MODUS.get(ss.zielgruppe, KULISSE_KEYS[-1])
 
 
 def setze_modus(m: str):
@@ -154,6 +163,17 @@ def uebernehme_flurstueck(props):
     ss.flaeche = int(props["EntFl"])
     ss.adresse = props["Flurstueck"]
     ss.nutzung_sel = ALKIS_ZU_NUTZUNG.get(props.get("HauptTN"), "Sonstige")
+
+
+def flaechen_score(props: dict, geb_satz: float) -> int:
+    """0–100 Priorisierungs-Score für schnelle Vorprüfung (Stufe, Fläche, Versiegelung, Gebühr)."""
+    stufe_pkt = {5: 35, 4: 25, 3: 15}.get(props.get("Stufe", 0), 5)
+    fl = float(props.get("EntFl", 0) or 0)
+    fl_pkt = min(35.0, (fl / 2000.0) * 35.0)
+    ver = float(props.get("VerAnt_pct", 0) or 0)
+    ver_pkt = min(15.0, (ver / 100.0) * 15.0)
+    geb_pkt = 15.0 if (geb_satz > 0 and fl >= 500) else (8.0 if geb_satz > 0 else 0.0)
+    return int(round(min(100.0, stufe_pkt + fl_pkt + ver_pkt + geb_pkt)))
 
 
 dark = bool(ss.nachtmodus)
@@ -212,7 +232,7 @@ st.markdown(
 .fr-mode-title {{font-size:16px; font-weight:750; color:{text_main} !important; margin:4px 0;}}
 .fr-mode-desc {{font-size:13px; color:{text_muted} !important; margin:0; line-height:1.5;}}
 
-.st-key-card1, .st-key-card2, .st-key-card3, .st-key-card4 {{
+.st-key-card1, .st-key-card2, .st-key-card3, .st-key-card4, .st-key-card5 {{
   background:{card_bg}; border:1px solid {border_col}; border-radius:12px;
   padding:16px; margin-bottom:12px;
 }}
@@ -561,13 +581,16 @@ with col1:
         if plz and not plz_ok:
             st.error("Bitte eine gültige fünfstellige Postleitzahl eingeben.")
 
+        if ss.kulisse_sel not in FOERDER_KULISSE_NI:
+            ss.kulisse_sel = DEFAULT_KULISSE_MODUS.get(ss.zielgruppe, KULISSE_KEYS[-1])
+
         kulisse_label = st.selectbox(
             "Förderkulisse (Stand Nov. 2026 – vorläufig)",
             KULISSE_KEYS,
-            index=KULISSE_KEYS.index(ss.kulisse_sel) if ss.kulisse_sel in KULISSE_KEYS else 0,
+            index=KULISSE_KEYS.index(ss.kulisse_sel),
             key="kulisse_sel",
         )
-        kulisse_info = FOERDER_KULISSE_NI[kulisse_label]
+        kulisse_info = FOERDER_KULISSE_NI.get(kulisse_label, FOERDER_KULISSE_NI[KULISSE_KEYS[-1]])
         c, d = st.columns(2)
         belag = c.selectbox("Vorhandener Belag", list(DEFAULT_RUECKBAU_EUR_M2))
         nutzung = d.selectbox("Nutzungsart", list(NUTZUNGS_FAKTOR), key="nutzung_sel")
@@ -582,6 +605,13 @@ with col1:
             st.warning(f"Prüfung erst ab {MINDEST_FLAECHE_M2} m² sinnvoll (aktuell: {flaeche} m²).")
 
 g_info = gebuehr(gemeinde)
+default_quote = int(kulisse_info.get("quote_default", 0))
+max_quote = int(kulisse_info.get("quote_max", 100))
+kulisse_code = str(kulisse_info.get("code", "Kulisse"))
+kulisse_traeger = str(kulisse_info.get("traeger", ""))
+kulisse_hinweis = str(kulisse_info.get("hinweis", ""))
+kulisse_befristung = str(kulisse_info.get("befristung", "–"))
+
 with st.expander("Annahmen, Förderquote & Richtwerte offenlegen"):
     p1, p2, p3, p4 = st.columns(4)
     pu_preis = p1.number_input("Wasserdurchlässiger Belag (€/m²)", value=DEFAULT_PU_ASPHALT_EUR_M2, step=1.0)
@@ -595,13 +625,13 @@ with st.expander("Annahmen, Förderquote & Richtwerte offenlegen"):
     )
     foerder_quote_manuell = st.number_input(
         "Angenommene Förderquote (%)",
-        0,
-        100,
-        int(kulisse_info["quote_default"]),
-        key=f"quote_{kulisse_info['code']}",
-        help=f"Regelförderung: {kulisse_info['quote_default']} % (max. {kulisse_info['quote_max']} %; z. B. 80 % bei Finanzschwäche).",
+        min_value=0,
+        max_value=100,
+        value=default_quote,
+        key=f"quote_{kulisse_code}",
+        help=f"Regelförderung: {default_quote} % (max. {max_quote} %; z. B. 80 % bei Finanzschwäche).",
     )
-    st.info(f"**{kulisse_info['code']}** · {kulisse_info['traeger']}: {kulisse_info['hinweis']}")
+    st.info(f"**{kulisse_code}** · {kulisse_traeger}: {kulisse_hinweis}")
 
 preis_m2 = (pu_preis + rueckbau + unterbau) * NUTZUNGS_FAKTOR[nutzung]
 kosten = flaeche * preis_m2
@@ -616,12 +646,12 @@ if max_k and kosten > max_k and quote > 0:
         f"Förderfähige Kosten ({eur(kosten)}) übersteigen die Programm-Obergrenze ({eur(max_k)}) – Zuschuss auf {eur(max_k)} Basis gedeckelt."
     )
 
-if "KfW 444" in kulisse_info["code"]:
+if "KfW 444" in kulisse_code:
     hinweise.append(
         "KfW 444 Pflichtkriterien: Vollständige Entkopplung von der Kanalisation (Versickerung vor Ort), "
         "Bodenarbeiten nach DIN 18915 / DIN 19731, keine Altlastensanierung als Hauptzweck, Antrag zwingend vor Maßnahmenbeginn (Frist: 31.12.2026)."
     )
-elif "KliKoNi" in kulisse_info["code"]:
+elif "KliKoNi" in kulisse_code:
     hinweise.append("KliKoNi (2026–2028) befindet sich in Ausarbeitung – Fördersätze nach Richtlinienstart prüfen.")
 elif quote == 0:
     hinweise.append(
@@ -657,10 +687,10 @@ if scan_triggered:
                 "zielgruppe": ss.zielgruppe,
                 "gemeinde": gemeinde,
                 "flaeche_m2": flaeche,
-                "programm": kulisse_info["code"],
+                "programm": kulisse_code,
                 "kosten": round(kosten, 2),
                 "zuschuss": round(zuschuss, 2),
-                "quelle": "FlaechenRadar_NI_v3_5",
+                "quelle": "FlaechenRadar_NI_v3_7",
             }
             ss.crm_status = "ok" if requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8).ok else "fail"
         except Exception:
@@ -676,8 +706,8 @@ with col2:
             unsafe_allow_html=True,
         )
         srow("Prüfkennung", ss.system_id or "– noch nicht ausgelöst –")
-        srow("Förderkulisse", kulisse_info["code"])
-        srow("Befristung / Status", kulisse_info["befristung"])
+        srow("Förderkulisse", kulisse_code)
+        srow("Befristung / Status", kulisse_befristung)
         geb_pill = (
             f'<span class="pill ok">{zahl(gebuehr_satz, 2)} €/m²·a</span>'
             if gebuehr_satz > 0
@@ -696,11 +726,14 @@ with col2:
         st.markdown("**Aktuelle Förderkulisse offiziell prüfen:**")
         l1, l2 = st.columns(2)
         with l1:
-            st.link_button("🔗 KfW 444 (NKK)", "https://www.kfw.de/inlandsfoerderung/%C3%96ffentliche-Einrichtungen/Energetische-Stadtsanierung/F%C3%B6rderprodukte/Nat%C3%BCrlicher-Klimaschutz-in-Kommunen-(444)/")
+            st.link_button(
+                "🔗 KfW 444 (NKK)",
+                "https://www.kfw.de/inlandsfoerderung/%C3%96ffentliche-Einrichtungen/Energetische-Stadtsanierung/F%C3%B6rderprodukte/Nat%C3%BCrlicher-Klimaschutz-in-Kommunen-(444)/",
+            )
         with l2:
             st.link_button("🔗 NBank & KEAN", "https://www.nbank.de/")
 
-        with st.expander("Entscheidungsmatrix: Wann welche Förderung?"):
+        with st.expander("Entscheidungsmatrix: Wann welche Förderung?", expanded=True):
             st.dataframe(
                 pd.DataFrame(
                     [
@@ -774,8 +807,14 @@ def baue_pdf() -> bytes:
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 7, t(f"Kennung: {ss.system_id or 'Entwurf'} | Modus: {aktiv_modus['label']}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, t(f"Gemeinde: {gemeinde} | Flaeche: {zahl(flaeche)} m2"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, t(f"Foerderkulisse: {kulisse_info['code']} ({zahl(eff_quote)} %)"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, t(f"Kostenrahmen: {eur_spanne(kosten)} | Zuschuss: {eur(zuschuss)} | Eigenanteil: {eur(eigenanteil)}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t(f"Foerderkulisse: {kulisse_code} ({zahl(eff_quote)} %)"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(
+        0,
+        7,
+        t(f"Kostenrahmen: {eur_spanne(kosten)} | Zuschuss: {eur(zuschuss)} | Eigenanteil: {eur(eigenanteil)}"),
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
     pdf.ln(4)
     for h in hinweise:
         pdf.multi_cell(0, 5, t(f"- {h}"), new_x="LMARGIN", new_y="NEXT")
@@ -790,17 +829,35 @@ with col3:
             unsafe_allow_html=True,
         )
         if ss.zielgruppe == "B2G":
-            kpi("Prüffläche im Fokus", f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)", f"Nutzung: {nutzung}", cls="accent")
+            kpi(
+                "Prüffläche im Fokus",
+                f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)",
+                f"Nutzung: {nutzung}",
+                cls="accent",
+            )
             kpi("Vorläufiger Investitionsrahmen", eur_spanne(kosten), f"Richtwert {eur(preis_m2, 2)}/m²")
-            kpi("Mögliche Förderkulisse", f"{zahl(eff_quote)} % · {eur(zuschuss)}", f"{kulisse_info['code']} · Eigenanteil ca. {eur(eigenanteil)}")
+            kpi(
+                "Mögliche Förderkulisse",
+                f"{zahl(eff_quote)} % · {eur(zuschuss)}",
+                f"{kulisse_code} · Eigenanteil ca. {eur(eigenanteil)}",
+            )
         elif ss.zielgruppe == "B2B":
-            kpi("Voraussichtlicher Zuschuss", f"{eur(zuschuss)} ({zahl(eff_quote)} %)", kulisse_info["code"], cls="accent")
+            kpi(
+                "Voraussichtlicher Zuschuss",
+                f"{eur(zuschuss)} ({zahl(eff_quote)} %)",
+                kulisse_code,
+                cls="accent",
+            )
             kpi("Vorläufiger Netto-Eigenanteil", eur(eigenanteil), f"Rahmen {eur_spanne(kosten)}")
             kpi("Richtwert Kalkulation", f"{eur(preis_m2, 2)} / m²", f"{zahl(flaeche)} m² · {belag}")
         else:
             kpi("Geprüfte Fläche", f"{zahl(flaeche)} m²", "Regenwasser kann vor Ort versickern", cls="accent")
             kpi("Voraussichtlicher Kostenrahmen", eur_spanne(kosten), f"Für {belag} inkl. Nebenarbeiten")
-            kpi("Möglicher Förderanteil", f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})", "Auf Landesebene 0 % Standard – lokal prüfen")
+            kpi(
+                "Möglicher Förderanteil",
+                f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})",
+                "Auf Landesebene 0 % Standard – lokal prüfen",
+            )
 
         for h in hinweise[:-1]:
             st.warning(h, icon="⚠️")
@@ -815,33 +872,153 @@ with col3:
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 with st.container(key="card4"):
     st.markdown(
-        '<div class="step">Schritt 4 · Flächenübersicht</div>'
-        '<div class="step-title">Prüfflächen im Überblick</div>',
+        '<div class="step">Schritt 4 · Flächenübersicht &amp; Gemeindevergleich</div>'
+        '<div class="step-title">Prüfflächen &amp; Kommunen im Vergleich</div>',
         unsafe_allow_html=True,
     )
-    anfragen = [f["properties"] for f in feats if f["properties"]["PreCheck"] in ("A", "B")]
-    if anfragen:
-        df = pd.DataFrame(
-            [
+    tab1, tab2 = st.tabs([f"Flächenübersicht {gemeinde}", "Gemeindevergleich (Region)"])
+
+    with tab1:
+        anfragen = [f["properties"] for f in feats if f["properties"]["PreCheck"] in ("A", "B")]
+        if anfragen:
+            df = pd.DataFrame(
+                [
+                    {
+                        "Einordnung": p["PreCheck"],
+                        "Flurstück": p["Flurstueck"],
+                        "Kennzeichen": p["Fsk"],
+                        "Ortsteil": p["Gmd"],
+                        "Nutzung": p["Nutzung"],
+                        "Potenzialstufe": p["EntPot"],
+                        "Versiegelt %": p["VerAnt_pct"],
+                        "Landes-Potenzial m²": p["EntFl"],
+                        "Kostenrahmen ca. €": round(p["EntFl"] * preis_m2, -2),
+                        "Gebühreneffekt €/a": round(p["EntFl"] * gebuehr_satz),
+                    }
+                    for p in anfragen
+                ]
+            )
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Priorität A (hoch)", zahl((df["Einordnung"] == "A").sum()))
+            m2.metric("Priorität B (prüfen)", zahl((df["Einordnung"] == "B").sum()))
+            m3.metric(
+                "Landes-Potenzial A",
+                f"{zahl(df.loc[df['Einordnung'] == 'A', 'Landes-Potenzial m²'].sum() / 10_000, 1)} ha",
+            )
+            filt = st.multiselect("Einordnung filtern", ["A", "B"], default=["A"])
+            dfa = df[df["Einordnung"].isin(filt)]
+            st.dataframe(dfa, use_container_width=True, hide_index=True, height=280)
+            sel = {p["Fsk"] for p in anfragen if p["PreCheck"] in filt}
+            gj = {
+                "type": "FeatureCollection",
+                "name": f"FlaechenRadar_Flaechen_{gemeinde}",
+                "attribution": ek.QUELLE,
+                "features": [f for f in feats if f["properties"]["Fsk"] in sel],
+            }
+            e1, e2 = st.columns(2)
+            e1.download_button(
+                "⬇ Übersicht als CSV exportieren",
+                dfa.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                file_name=f"FlaechenRadar_{gemeinde}.csv",
+                mime="text/csv",
+            )
+            e2.download_button(
+                "⬇ Flächen als GeoJSON exportieren",
+                json.dumps(gj, ensure_ascii=False).encode(),
+                file_name=f"FlaechenRadar_{gemeinde}.geojson",
+                mime="application/geo+json",
+            )
+        else:
+            st.info("Für die aktuelle Filterauswahl liegen keine Flächen in Priorität A oder B vor.")
+
+    with tab2:
+        auswahl = st.multiselect(
+            "Gemeinden vergleichen",
+            gemeinden,
+            default=[g for g in REGION_WERLTE if g in gemeinden],
+        )
+        if st.button("Gemeindevergleich berechnen", type="secondary"):
+            ss.vergleich = auswahl
+        if ss.vergleich:
+            rows = []
+            prog = st.progress(0.0, text="Katasterdaten werden ausgewertet …")
+            for i, g in enumerate(ss.vergleich):
+                try:
+                    _, s = entpot(g)
+                except Exception:
+                    continue
+                gi = gebuehr(g)
+                rows.append(
+                    {
+                        "Gemeinde": g,
+                        "Flurstücke": s["flurstuecke"],
+                        "Stufe 5": s["stufe"][5],
+                        "Stufe 4": s["stufe"][4],
+                        "Priorität A": s["a_leads"],
+                        "Priorität B": s["b_leads"],
+                        "Potenzial A (ha)": round(s["entfl_b2b_hoch"] / 10_000, 1),
+                        "NW-Gebühr": (
+                            f"{zahl(gi['satz'], 2)} €/m²"
+                            if gi["satz"]
+                            else "kein Satz hinterlegt"
+                            if gi["status"] == "keine"
+                            else "unbekannt"
+                        ),
+                    }
+                )
+                prog.progress((i + 1) / len(ss.vergleich), text=f"{g} ausgewertet")
+            prog.empty()
+            vdf = pd.DataFrame(rows).sort_values("Potenzial A (ha)", ascending=False)
+            st.dataframe(vdf, use_container_width=True, hide_index=True, height=340)
+            st.download_button(
+                "⬇ Gemeindevergleich als CSV exportieren",
+                vdf.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                file_name="FlaechenRadar_Gemeindevergleich.csv",
+                mime="text/csv",
+            )
+
+st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+with st.container(key="card5"):
+    st.markdown(
+        '<div class="step">Schritt 5 · Nächstes Modul (Priorisierungs-Score)</div>'
+        '<div class="step-title">Top-Chancen nach Potenzial-, Flächen- &amp; Gebühren-Score</div>',
+        unsafe_allow_html=True,
+    )
+    if feats:
+        scored = []
+        for f in feats:
+            p = f["properties"]
+            sc = flaechen_score(p, gebuehr_satz)
+            scored.append(
                 {
+                    "Score (0–100)": sc,
                     "Einordnung": p["PreCheck"],
                     "Flurstück": p["Flurstueck"],
                     "Nutzung": p["Nutzung"],
-                    "Landes-Potenzial m²": p["EntFl"],
-                    "Kostenrahmen ca. €": round(p["EntFl"] * preis_m2, -2),
+                    "Stufe": p["EntPot"],
+                    "Versiegelt %": p["VerAnt_pct"],
+                    "Potenzial m²": p["EntFl"],
+                    "Kosten ca. €": round(p["EntFl"] * preis_m2, -2),
                 }
-                for p in anfragen
-            ]
+            )
+        sdf = (
+            pd.DataFrame(scored)
+            .sort_values(["Score (0–100)", "Potenzial m²"], ascending=[False, False])
+            .head(15)
         )
-        st.dataframe(df, use_container_width=True, hide_index=True, height=260)
+        st.caption(
+            "Bewertet Potenzialstufe (max. 35 Pkt.), Flächengröße (max. 35 Pkt.), "
+            "Versiegelungsanteil (max. 15 Pkt.) und Gebührenhebel (max. 15 Pkt.) für die schnelle Vorprüfung."
+        )
+        st.dataframe(sdf, use_container_width=True, hide_index=True, height=300)
         st.download_button(
-            "⬇ Übersicht als CSV exportieren",
-            df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
-            file_name=f"FlaechenRadar_{gemeinde}.csv",
+            "⬇ Top-15 Prioritäten (Score) als CSV exportieren",
+            sdf.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+            file_name=f"FlaechenRadar_TopScore_{gemeinde}.csv",
             mime="text/csv",
         )
     else:
-        st.info("Für die aktuelle Filterauswahl liegen keine Flächen in Priorität A oder B vor.")
+        st.info("Sobald Katasterdaten für eine Gemeinde geladen sind, erscheint hier das Top-15-Scoring.")
 
 st.markdown(
     f"""<div class="fr-foot">
