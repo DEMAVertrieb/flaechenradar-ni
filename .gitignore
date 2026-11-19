@@ -1,0 +1,25 @@
+# Cache & lokale Daten
+kataster/
+__pycache__/
+*.pyc
+.Python
+.env
+.venv/
+venv/
+*.log
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Exporte / temporäre Dateien
+*.csv
+*.geojson
+*.pdf
+!README.md
