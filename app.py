@@ -1,6 +1,6 @@
 """
 FlächenRadar NI – Digitale Flächen- & Entsiegelungsanalyse
-Version 3.3 (Mobil-gestapelt · Klarer B2G/B2B/B2C-Header · Einheitlicher Kontrast)
+Version 3.4 (Förderrichtlinien NI Nov 2026 · KfW 444 / NBank / KliKoNi · Mobil-gestapelt)
 """
 
 import json
@@ -73,15 +73,22 @@ DEFAULT_PRECHECK_A_FL = 1000
 DEFAULT_PRECHECK_B_STUFE = 3
 DEFAULT_PRECHECK_B_FL = 300
 
+KULISSE_KEYS = list(FOERDER_KULISSE_NI.keys())
+DEFAULT_KULISSE_MODUS = {
+    "B2G": KULISSE_KEYS[0],   # KfW 444 NKK – Modul D.2 (50 %)
+    "B2B": KULISSE_KEYS[-1],  # Kein Landesprogramm / Lokale Prüfung (0 %)
+    "B2C": KULISSE_KEYS[-1],  # Kein Landesprogramm / Lokale Prüfung (0 %)
+}
+
 MODUS_META = {
     "B2G": {
         "nav": "B2G · Kommune",
         "label": "Kommune (B2G)",
-        "kurz": "Kommunale Flächen- & Entsiegelungsanalyse (§ 19 NKlimaG)",
+        "kurz": "Kommunale Flächen- & Entsiegelungsanalyse (§ 19 NKlimaG · Pflichtfrist 31.12.2026)",
         "titel": "Welche Flächen im Gemeindegebiet bieten ein prüfenswertes Entsiegelungspotenzial?",
         "hinweis": (
-            "Unterstützt Erfassung, Priorisierung und Vorlagenbildung auf Basis des Entsiegelungskatasters.NI. "
-            "Vorläufige, nicht rechtsverbindliche Einschätzung – ersetzt keine Planung, Genehmigung oder Förderentscheidung."
+            "Unterstützt Erfassung, Priorisierung und Vorlagenbildung auf Basis des Entsiegelungskatasters.NI "
+            "(§ 19 NKlimaG, Ersterfassung bis 31.12.2026). Vorläufige Einschätzung – ersetzt keine Fachplanung oder Förderprüfung."
         ),
         "b2b_default": True,
         "default_nutzung": "Geh- und Radweg",
@@ -89,11 +96,11 @@ MODUS_META = {
     "B2B": {
         "nav": "B2B · Gewerbe",
         "label": "Gewerbe & Eigentümer (B2B)",
-        "kurz": "Wirtschaftlichkeit, Förderansatz, Gebührenlage & Erhalt der Nutzbarkeit",
+        "kurz": "Wirtschaftlichkeit, Gebührenlage, Starkregenvorsorge & Erhalt der Nutzbarkeit",
         "titel": "Wie tragfähig ist eine Entsiegelung oder Teilentsiegelung auf Ihrer Betriebs- oder Objektfläche?",
         "hinweis": (
-            "Vorläufige Richtwertprüfung unter Berücksichtigung von Förderkulisse, Netto-Eigenanteil, "
-            "möglichem Gebühreneffekt und laufender Nutzbarkeit (Befahrbarkeit, Parken, Andienung)."
+            "Vorläufige Richtwertprüfung zu Investitionsrahmen, möglichem Gebühreneffekt und Nutzbarkeit. "
+            "In Niedersachsen besteht aktuell kein flächendeckendes Landesprogramm für Gewerbeflächen – lokale Programme prüfen."
         ),
         "b2b_default": True,
         "default_nutzung": "Gewerbefläche / Parkplatz",
@@ -104,8 +111,8 @@ MODUS_META = {
         "kurz": "Einfache Ersteinschätzung für Hof, Einfahrt und private Flächen",
         "titel": "Welche Entsiegelungs- oder Versickerungsmöglichkeiten passen zu Ihrer Fläche?",
         "hinweis": (
-            "Unverbindliche Ersteinschätzung in verständlicher Sprache mit realistischem Kostenrahmen, "
-            "möglichem Förderhinweis und klaren nächsten Schritten."
+            "Unverbindliche Ersteinschätzung mit realistischem Kostenrahmen und Fokus auf Versickerung, "
+            "Starkregenvorsorge und Kühlung. Auf Landesebene existiert derzeit keine private Entsiegelungsförderung (0 % Standard)."
         ),
         "b2b_default": False,
         "default_nutzung": "Hoffläche",
@@ -124,6 +131,7 @@ for k, v in {
     "flurstueck": None,
     "adresse": "",
     "nutzung_sel": "Geh- und Radweg",
+    "kulisse_sel": DEFAULT_KULISSE_MODUS["B2G"],
     "cache_hinweis_shown": False,
 }.items():
     ss.setdefault(k, v)
@@ -132,6 +140,7 @@ for k, v in {
 def setze_modus(m: str):
     ss.zielgruppe = m
     ss.nutzung_sel = MODUS_META[m]["default_nutzung"]
+    ss.kulisse_sel = DEFAULT_KULISSE_MODUS[m]
 
 
 def uebernehme_polygon():
@@ -254,7 +263,6 @@ st.markdown(
   margin-top:18px; padding:14px 16px; line-height:1.55;
 }}
 
-/* Auf Smartphones Spalten sauber untereinander stapeln statt quetschen */
 @media (max-width: 768px) {{
   div[data-testid="stHorizontalBlock"] {{
     flex-direction: column !important;
@@ -554,7 +562,11 @@ with col1:
         if plz and not plz_ok:
             st.error("Bitte eine gültige fünfstellige Postleitzahl eingeben.")
 
-        kulisse_label = st.selectbox("Förderkulisse (vorläufig)", list(FOERDER_KULISSE_NI.keys()), index=0)
+        kulisse_label = st.selectbox(
+            "Förderkulisse (Stand Nov. 2026 – vorläufig)",
+            KULISSE_KEYS,
+            key="kulisse_sel",
+        )
         kulisse_info = FOERDER_KULISSE_NI[kulisse_label]
         c, d = st.columns(2)
         belag = c.selectbox("Vorhandener Belag", list(DEFAULT_RUECKBAU_EUR_M2))
@@ -570,7 +582,7 @@ with col1:
             st.warning(f"Prüfung erst ab {MINDEST_FLAECHE_M2} m² sinnvoll (aktuell: {flaeche} m²).")
 
 g_info = gebuehr(gemeinde)
-with st.expander("Annahmen & Richtwerte offenlegen"):
+with st.expander("Annahmen, Förderquote & Richtwerte offenlegen"):
     p1, p2, p3, p4 = st.columns(4)
     pu_preis = p1.number_input("Wasserdurchlässiger Belag (€/m²)", value=DEFAULT_PU_ASPHALT_EUR_M2, step=1.0)
     rueckbau = p2.number_input(f"Rückbau {belag} (€/m²)", value=DEFAULT_RUECKBAU_EUR_M2[belag], step=1.0)
@@ -582,8 +594,14 @@ with st.expander("Annahmen & Richtwerte offenlegen"):
         key=f"geb_{gemeinde}",
     )
     foerder_quote_manuell = st.number_input(
-        "Angenommene Förderquote (%)", 0, 100, int(kulisse_info["quote_default"])
+        "Angenommene Förderquote (%)",
+        0,
+        100,
+        int(kulisse_info["quote_default"]),
+        key=f"quote_{kulisse_info['code']}",
+        help=f"Regelförderung der Kulisse: {kulisse_info['quote_default']} % (max. {kulisse_info['quote_max']} %).",
     )
+    st.info(f"**{kulisse_info['code']}** · {kulisse_info['traeger']}: {kulisse_info['hinweis']}")
 
 preis_m2 = (pu_preis + rueckbau + unterbau) * NUTZUNGS_FAKTOR[nutzung]
 kosten = flaeche * preis_m2
@@ -591,14 +609,35 @@ hinweise = []
 programm = kulisse_label
 quote = float(foerder_quote_manuell)
 zuschuss = kosten * quote / 100 if quote > 0 else 0.0
+max_k = kulisse_info.get("max_kosten_eur")
+if max_k and kosten > max_k and quote > 0:
+    zuschuss = max_k * quote / 100
+    hinweise.append(f"Förderfähige Kosten auf Programm-Obergrenze ({eur(max_k)}) gedeckelt.")
+
+if "KfW 444" in kulisse_info["code"]:
+    hinweise.append(
+        "KfW 444 Pflichtkriterien: Vollständige Entkopplung von der Kanalisation (Versickerung vor Ort), "
+        "keine Altlastensanierung als Hauptzweck, Antrag zwingend vor Maßnahmenbeginn (Frist: 31.12.2026)."
+    )
+elif "KliKoNi" in kulisse_info["code"]:
+    hinweise.append("KliKoNi (2026–2028) befindet sich in Ausarbeitung – Fördersätze nach Richtlinienstart prüfen.")
+elif quote == 0:
+    hinweise.append(
+        "Keine automatische Landesförderquote angesetzt – lokale kommunale Programme sowie Beratung "
+        "über Kommune, NBank oder KEAN prüfen."
+    )
+
 if quote > 0 and zuschuss < BAGATELL_ZUSCHUSS_EUR:
     hinweise.append(f"Voraussichtlicher Zuschuss unter {eur(BAGATELL_ZUSCHUSS_EUR)} – Bagatellgrenzen prüfen.")
-if zuschuss > DE_MINIMIS_EUR:
+if ss.zielgruppe == "B2B" and zuschuss > DE_MINIMIS_EUR:
     hinweise.append(f"De-minimis-Obergrenze ({eur(DE_MINIMIS_EUR)}) berücksichtigt.")
     zuschuss = DE_MINIMIS_EUR
 if gebuehr_satz <= 0:
-    hinweise.append(f"Für {gemeinde} ist kein laufender Niederschlagswassergebührensatz hinterlegt.")
-hinweise.append("Untergrund, Leitungen, Schutzgebiete und Entwässerung müssen vor Ort geprüft werden.")
+    hinweise.append(
+        f"Für {gemeinde} ist kein laufender Niederschlagswassergebührensatz hinterlegt – Fokus auf "
+        "Starkregenvorsorge, Entwässerungsentlastung und Hitzeschutz."
+    )
+hinweise.append("Untergrund, Leitungen, Schutzgebiete und Versickerungsfähigkeit müssen vor Ort geprüft werden.")
 hinweise.append("Vorläufige, unverbindliche Einschätzung – keine Planung, Förderzusage oder Preisgarantie.")
 
 eigenanteil = max(0.0, kosten - zuschuss)
@@ -616,8 +655,10 @@ if scan_triggered:
                 "zielgruppe": ss.zielgruppe,
                 "gemeinde": gemeinde,
                 "flaeche_m2": flaeche,
+                "programm": kulisse_info["code"],
                 "kosten": round(kosten, 2),
-                "quelle": "FlaechenRadar_NI_v3_3",
+                "zuschuss": round(zuschuss, 2),
+                "quelle": "FlaechenRadar_NI_v3_4",
             }
             ss.crm_status = "ok" if requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8).ok else "fail"
         except Exception:
@@ -628,12 +669,13 @@ if scan_triggered:
 with col2:
     with st.container(key="card2"):
         st.markdown(
-            '<div class="step">Schritt 2 · Einordnung &amp; Ablauf</div>'
-            '<div class="step-title">Prüfstatus &amp; nächste Schritte</div>',
+            '<div class="step">Schritt 2 · Förderkulisse &amp; Ablauf</div>'
+            '<div class="step-title">Prüfstatus &amp; Fördercheck</div>',
             unsafe_allow_html=True,
         )
         srow("Prüfkennung", ss.system_id or "– noch nicht ausgelöst –")
-        srow("Förderkulisse", programm)
+        srow("Förderkulisse", kulisse_info["code"])
+        srow("Befristung / Status", kulisse_info["befristung"])
         geb_pill = (
             f'<span class="pill ok">{zahl(gebuehr_satz, 2)} €/m²·a</span>'
             if gebuehr_satz > 0
@@ -648,12 +690,20 @@ with col2:
                 "off": '<span class="pill off">nur lokal erfasst</span>',
             }[ss.crm_status],
         )
+
+        st.markdown("**Aktuelle Förderkulisse offiziell prüfen:**")
+        l1, l2 = st.columns(2)
+        with l1:
+            st.link_button("🔗 KfW 444 (NKK)", "https://www.kfw.de/inlandsfoerderung/%C3%96ffentliche-Einrichtungen/Energetische-Stadtsanierung/F%C3%B6rderprodukte/Nat%C3%BCrlicher-Klimaschutz-in-Kommunen-(444)/")
+        with l2:
+            st.link_button("🔗 NBank & KEAN", "https://www.nbank.de/")
+
         st.markdown(
             """
 <div class="next-step">
   <b>Ablauf nach der Prüfung:</b><br>
-  1. Fläche &amp; Annahmen prüfen · 2. Fotos/Pläne ergänzen · 3. Vor-Ort-Check klären ·
-  4. Förder- &amp; Gebührenlage prüfen · 5. Fachplanung / Umsetzung anfragen · 6. Unterlagen sichern
+  1. Fläche &amp; Entkopplung prüfen · 2. Fotos/Pläne ergänzen · 3. Vor-Ort-Check &amp; Altlasten klären ·
+  4. Förderantrag vor Maßnahmenbeginn stellen · 5. Fachplanung / Umsetzung anfragen
 </div>
 """,
             unsafe_allow_html=True,
@@ -688,7 +738,8 @@ def baue_pdf() -> bytes:
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 7, t(f"Kennung: {ss.system_id or 'Entwurf'} | Modus: {aktiv_modus['label']}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, t(f"Gemeinde: {gemeinde} | Flaeche: {zahl(flaeche)} m2"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, t(f"Kostenrahmen: {eur_spanne(kosten)} | Zuschuss: {eur(zuschuss)}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t(f"Foerderkulisse: {kulisse_info['code']} ({zahl(eff_quote)} %)"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, t(f"Kostenrahmen: {eur_spanne(kosten)} | Zuschuss: {eur(zuschuss)} | Eigenanteil: {eur(eigenanteil)}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     for h in hinweise:
         pdf.multi_cell(0, 5, t(f"- {h}"), new_x="LMARGIN", new_y="NEXT")
@@ -705,15 +756,15 @@ with col3:
         if ss.zielgruppe == "B2G":
             kpi("Prüffläche im Fokus", f"{zahl(flaeche)} m² ({zahl(flaeche / 10_000, 2)} ha)", f"Nutzung: {nutzung}", cls="accent")
             kpi("Vorläufiger Investitionsrahmen", eur_spanne(kosten), f"Richtwert {eur(preis_m2, 2)}/m²")
-            kpi("Mögliche Förderkulisse", f"{zahl(eff_quote)} % · {eur(zuschuss)}", programm)
+            kpi("Mögliche Förderkulisse", f"{zahl(eff_quote)} % · {eur(zuschuss)}", f"{kulisse_info['code']} · Eigenanteil ca. {eur(eigenanteil)}")
         elif ss.zielgruppe == "B2B":
-            kpi("Voraussichtlicher Zuschuss", f"{eur(zuschuss)} ({zahl(eff_quote)} %)", programm, cls="accent")
+            kpi("Voraussichtlicher Zuschuss", f"{eur(zuschuss)} ({zahl(eff_quote)} %)", kulisse_info["code"], cls="accent")
             kpi("Vorläufiger Netto-Eigenanteil", eur(eigenanteil), f"Rahmen {eur_spanne(kosten)}")
             kpi("Richtwert Kalkulation", f"{eur(preis_m2, 2)} / m²", f"{zahl(flaeche)} m² · {belag}")
         else:
             kpi("Geprüfte Fläche", f"{zahl(flaeche)} m²", "Regenwasser kann vor Ort versickern", cls="accent")
             kpi("Voraussichtlicher Kostenrahmen", eur_spanne(kosten), f"Für {belag} inkl. Nebenarbeiten")
-            kpi("Möglicher Förderanteil", f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})", "Vorab prüfen")
+            kpi("Möglicher Förderanteil", f"{zahl(eff_quote)} % (ca. {eur(zuschuss)})", "Auf Landesebene 0 % Standard – lokal prüfen")
 
         for h in hinweise[:-1]:
             st.warning(h, icon="⚠️")
@@ -759,6 +810,7 @@ with st.container(key="card4"):
 st.markdown(
     f"""<div class="fr-foot">
 <b>FlächenRadar NI</b> · Digitale Flächen-, Entsiegelungs- &amp; Wirtschaftlichkeitsanalyse.<br>
+Rechtsrahmen &amp; Förderstand: § 19 NKlimaG (Ersterfassung bis 31.12.2026), § 1a NNatSchG, KfW 444 (NKK), NBank, KliKoNi (Stand Nov. 2026).<br>
 Unverbindliche, vorläufige Einschätzung – keine verbindliche Planung, Baugenehmigung, Förderzusage oder Preisgarantie.<br>
 Katastergrundlage: {ek.QUELLE} · <a href="https://downloads.entsiegelungskataster.niedersachsen.de/" target="_blank">Entsiegelungskataster.NI</a>
 </div>""",

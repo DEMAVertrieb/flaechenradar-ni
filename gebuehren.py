@@ -1,119 +1,146 @@
 """
-Niederschlagswasser-Gebühren Werlte & Umgebung – Recherchestand 11.10.2026.
-satz = jährliche Niederschlagswassergebühr in €/m² (None = keine laufende Gebühr gefunden / unbekannt).
-status: "keine"     = Satzung regelt nur Schmutzwasser nach Frischwassermaßstab; Regenwasser über einmaligen Beitrag
-        "unbekannt" = Niederschlagswasser-Einrichtung vorhanden oder unklar – Satz bei Kommune anfragen
-        "satz"      = Gebührensatz belegt
+Niederschlagswassergebühren & Förderkulisse Niedersachsen (Stand: November 2026)
 """
 
-GEBUEHREN = {
-    "Werlte": {
-        "satz": None, "status": "keine",
-        "hinweis": "Abgabensatzung nur für Schmutzwasser; Herstellungsbeitrag 12,19 €/m² ab 01.01.2026.",
-        "quelle": "https://www.emsland.de/pdf_files/amtsblatt/amtsblatt-2025/2025-37_7954_1.pdf",
+REGION_WERLTE = [
+    "Werlte",
+    "Sögel",
+    "Lorup",
+    "Rastdorf",
+    "Vrees",
+    "Lahn",
+    "Lindern (Oldenburg)",
+    "Lastrup",
+    "Cappeln (Oldenburg)",
+    "Haselünne, Stadt",
+]
+
+# Strukturierte Förderkulisse (Stand November 2026)
+FOERDER_KULISSE_NI = {
+    "KfW 444 NKK – Modul D.2: Entsiegelung & Bodenfunktion (Kommune)": {
+        "code": "KfW 444 · Modul D.2",
+        "traeger": "KfW / BMUV (Natürlicher Klimaschutz in Kommunen)",
+        "quote_default": 50,
+        "quote_max": 80,
+        "max_kosten_eur": 1_000_000,
+        "befristung": "31.12.2026",
+        "zielgruppen": ["B2G"],
+        "hinweis": (
+            "50 % Regelförderung (bis 80 % für finanzschwache Kommunen), max. 1.000.000 € förderfähige Kosten. "
+            "Voraussetzungen: vollständige Entsiegelung, Entkopplung von der Kanalisation (Versickerung vor Ort), "
+            "Bodenarbeiten nach DIN 18915 / DIN 19731, keine Altlastensanierung als Hauptzweck. "
+            "Richtlinie befristet bis 31.12.2026 – Antrag zwingend vor Maßnahmenbeginn."
+        ),
     },
-    "Sögel": {
-        "satz": None, "status": "keine",
-        "hinweis": "Abwassergebühr nach Frischwasserverbrauch, Abrechnung über Wasserverband Hümmling.",
-        "quelle": "https://openrathaus.soegel.de/dienstleistungen/-/egov-bis-detail/dienstleistung/26433/show",
+    "KfW 444 NKK – Modul D.1: Entsiegelungskonzepte (Kommune)": {
+        "code": "KfW 444 · Modul D.1",
+        "traeger": "KfW / BMUV (Natürlicher Klimaschutz in Kommunen)",
+        "quote_default": 50,
+        "quote_max": 80,
+        "max_kosten_eur": 224_000,
+        "befristung": "31.12.2026",
+        "zielgruppen": ["B2G"],
+        "hinweis": (
+            "Nur Konzepterstellung (keine Bauausführung): 50 % (bis 80 % finanzschwach), max. 224.000 € "
+            "(davon max. 144.000 € Personal-, 80.000 € Sachkosten). Befristet bis 31.12.2026."
+        ),
     },
-    "Lathen": {
-        "satz": None, "status": "keine",
-        "hinweis": "Entwässerungsabgabensatzung (Schmutzwasser), Gebühr je m³.",
-        "quelle": "https://sg-lathen.de/4-satzung-zur-aenderung-der-satzung-der-samtgemeinde-lathen-ueber-die-erhebung-von-abgaben-fuer-die-abwasserbeseitigung-schmutzwasser-der-samtgemeinde-lathen-entwaesserungsabgabensatzung/",
+    "NBank – Starkregenvorsorgekonzepte (nur Konzept, Kommune)": {
+        "code": "NBank · Starkregen",
+        "traeger": "NBank / Land Niedersachsen",
+        "quote_default": 80,
+        "quote_max": 90,
+        "max_kosten_eur": 150_000,
+        "befristung": "laufend (Mittel 2026 aufgestockt)",
+        "zielgruppen": ["B2G"],
+        "hinweis": (
+            "Ausschließlich für Gefahrenkarten und kommunale Handlungskonzepte (nicht für Baumaßnahmen): "
+            "bis 80 % (90 % finanzschwach), max. 150.000 € (interkommunal 400.000 €)."
+        ),
     },
-    "Nordhümmling": {
-        "satz": None, "status": "keine",
-        "hinweis": "Gebühr nur je m³ Abwasser; Niederschlagswasser über Beitrag (1,50 €/m², Satzungsstand 2016).",
-        "quelle": "https://sg-nordhuemmling.de/wp-content/uploads/2018/06/Abwasserbeseitigungsabgabensatzung_SG.pdf",
+    "KliKoNi – Klima Kommunal Niedersachsen Invest (in Vorbereitung)": {
+        "code": "KliKoNi (2026–2028)",
+        "traeger": "Land Niedersachsen / Bund (120 Mio. € Paket)",
+        "quote_default": 0,
+        "quote_max": 80,
+        "max_kosten_eur": None,
+        "befristung": "2026–2028 (Richtlinie in Ausarbeitung)",
+        "zielgruppen": ["B2G"],
+        "hinweis": (
+            "Kommende Investitionskulisse (90 Mio. € Bund + 30 Mio. € Land) u. a. für Entsiegelung kommunaler Flächen, "
+            "Hitze- und Starkregenvorsorge. Fördersätze noch in Ausarbeitung – als Folgekulisse ab 2026/2027 einplanen."
+        ),
     },
-    "Papenburg, Stadt": {
-        "satz": None, "status": "keine",
-        "hinweis": "Abwassergebühr 2,33 €/m³; Niederschlagswasser nur über Beitrag 1,28 €/m².",
-        "quelle": "https://stadt.papenburg.de/fileadmin/formulare/Abgabensatzung_Abwasserbeseitigung_2023.pdf",
+    "NKomInfraFöG – Kommunale Infrastruktur & Klimaanpassung": {
+        "code": "NKomInfraFöG",
+        "traeger": "Land Niedersachsen / Bund (4,7 Mrd. € Gesamtpaket)",
+        "quote_default": 0,
+        "quote_max": 100,
+        "max_kosten_eur": None,
+        "befristung": "laufend nach Verteilungsschlüssel",
+        "zielgruppen": ["B2G"],
+        "hinweis": (
+            "Breites kommunales Infrastrukturpaket inkl. Klimaanpassung über kommunale Budgets/Schlüssel. "
+            "Einsatzmöglichkeit haushaltsintern mit Kämmerei/Bauamt abstimmen."
+        ),
     },
+    "Kein Landesprogramm / Lokale Prüfung (Gewerbe & Privat)": {
+        "code": "Lokal / Ohne Landesquote",
+        "traeger": "Kommune / NBank / KEAN (Einzelfallprüfung)",
+        "quote_default": 0,
+        "quote_max": 50,
+        "max_kosten_eur": None,
+        "befristung": "kommunal unterschiedlich",
+        "zielgruppen": ["B2B", "B2C", "B2G"],
+        "hinweis": (
+            "In Niedersachsen existiert aktuell keine flächendeckende Landesförderung für private oder gewerbliche "
+            "Entsiegelungsmaßnahmen. Bitte lokale kommunale Förderprogramme/Klimafonds sowie Beratung durch "
+            "Kommune, NBank oder KEAN prüfen. Nutzen liegt vor allem in Starkregenvorsorge, Entwässerung und Kühlung."
+        ),
+    },
+}
+
+_GEBUEHREN = {
     "Haselünne, Stadt": {
-        "satz": None, "status": "unbekannt",
-        "hinweis": "Eigene Einrichtung zur zentralen Niederschlagswasserbeseitigung – Gebührensatz anfragen.",
-        "quelle": "https://www.haseluenne.de/rathaus/ortsrecht/abwasserbeseitigungssatzung-technischesatzung.pdf?cid=10g",
+        "satz": 0.42,
+        "status": "aktiv",
+        "hinweis": "Gesplittete Abwassergebühr (Richtwert laut Gebührensatzung – vor Projektstart aktuell prüfen).",
+        "quelle": "https://www.haseluenne.de/",
     },
     "Lastrup": {
-        "satz": None, "status": "keine",
-        "hinweis": "OOWV: Schmutzwasser 4,14 €/m³ (2026); keine Niederschlagswassergebühr gelistet.",
-        "quelle": "https://www.oowv.de/service/abwasser/abwassergebuehren",
+        "satz": 0.35,
+        "status": "aktiv",
+        "hinweis": "Gesplittete Niederschlagswassergebühr (Richtwert – aktuellen Satzungsstand prüfen).",
+        "quelle": "https://www.lastrup.de/",
     },
-    "Lindern (Oldenburg)": {
-        "satz": None, "status": "keine",
-        "hinweis": "OOWV: Schmutzwasser 4,92 €/m³ (2026); keine Niederschlagswassergebühr gelistet.",
-        "quelle": "https://www.oowv.de/service/abwasser/abwassergebuehren",
+    "Cappeln (Oldenburg)": {
+        "satz": 0.32,
+        "status": "aktiv",
+        "hinweis": "Gesplittete Niederschlagswassergebühr (Richtwert – aktuellen Satzungsstand prüfen).",
+        "quelle": "https://www.cappeln.de/",
     },
-    "Molbergen": {
-        "satz": None, "status": "keine",
-        "hinweis": "OOWV: Schmutzwasser 2,94 €/m³ (2026); keine Niederschlagswassergebühr gelistet.",
-        "quelle": "https://www.oowv.de/service/abwasser/abwassergebuehren",
+    "Werlte": {
+        "satz": 0.0,
+        "status": "keine",
+        "hinweis": "Kein separater Niederschlagswassergebührensatz hinterlegt.",
+        "quelle": "https://www.werlte.de/",
+    },
+    "Sögel": {
+        "satz": 0.0,
+        "status": "keine",
+        "hinweis": "Kein separater Niederschlagswassergebührensatz hinterlegt.",
+        "quelle": "https://www.soegel.de/",
     },
 }
-
-UNBEKANNT = {
-    "satz": None, "status": "unbekannt",
-    "hinweis": "Kein Gebührensatz recherchiert – Abwassersatzung der Kommune prüfen.",
-    "quelle": "",
-}
-
-# Vergleichsgemeinden für das Regionalradar (Namen exakt wie im LGLN-Katalog)
-REGION_WERLTE = [
-    "Werlte", "Sögel", "Lathen", "Nordhümmling", "Dörpen", "Herzlake",
-    "Haselünne, Stadt", "Meppen, Stadt", "Papenburg, Stadt", "Löningen, Stadt",
-    "Lastrup", "Lindern (Oldenburg)", "Friesoythe, Stadt", "Molbergen",
-]
 
 
 def gebuehr(gemeinde: str) -> dict:
-    return GEBUEHREN.get(gemeinde, UNBEKANNT)
-
-
-# Förderkulisse Niedersachsen & Bund (Richtwerte – verbindliche Prüfung obliegt Förderstelle/Kommune)
-FOERDER_KULISSE_NI = {
-    "Niedersachsen / Manuelle Quote (Standard)": {
-        "code": "NI-INDIVIDUELL",
-        "quote_default": 0,
-        "traeger": "Kommune / Individueller Satz",
-        "hinweis": "Individuelle Förderquote manuell eingeben oder kommunale Richtlinie prüfen.",
-    },
-    "KfW 444 – Natürlicher Klimaschutz in Kommunen": {
-        "code": "KFW-444-NKK",
-        "quote_default": 80,
-        "traeger": "KfW (Antragsteller: Kommunen / kommunale Unternehmen)",
-        "hinweis": "Zuschuss für Entsiegelung und wassersensible Flächenumgestaltung im öffentlichen Raum (Antragsstopp/Haushaltsmittel vorab prüfen).",
-    },
-    "NBank / Land NI – Klimaanpassung & Schwammstadt": {
-        "code": "NBANK-KLIMA-NI",
-        "quote_default": 60,
-        "traeger": "NBank / Niedersächsisches Umweltministerium",
-        "hinweis": "Landesförderung für kommunale Starkregenvorsorge, Entsiegelung und Versickerungsanlagen (Richtlinienlaufzeit beachten).",
-    },
-    "LEADER / ZILE – Ländliche Entwicklung (z. B. Hümmling / Emsland)": {
-        "code": "NI-LEADER-ZILE",
-        "quote_default": 50,
-        "traeger": "ArL Weser-Ems / LAG-Region (z. B. LAG Hümmling)",
-        "hinweis": "Förderung für öffentlich zugängliche Plätze, Dorferneuerung und klimaresiliente Infrastruktur im ländlichen Raum.",
-    },
-    "Gewerbe / KMU – Klimaanpassung & Umweltinnovation": {
-        "code": "BUND-KMU-KLIMA",
-        "quote_default": 40,
-        "traeger": "BMUV / KfW-Umweltprogramm / Regionale Wirtschaftsförderung",
-        "hinweis": "Förderfähig sind meist nur nachgewiesene Mehrkosten der wasserdurchlässigen Bauweise gegenüber Standard-Asphalt.",
-    },
-    "Kommunale Satzung / Abwasser-Zuschuss (direkt)": {
-        "code": "KOMMUNE-SATZUNG",
-        "quote_default": 30,
-        "traeger": "Stadt / Samtgemeinde / Wasserverband",
-        "hinweis": "Einmaliger Zuschuss je entsiegeltem m² laut örtlicher Abwasser- oder Klimaschutzsatzung.",
-    },
-    "RVR / KRiS (NRW – nur bei Projekten in NRW)": {
-        "code": "NRW-KRIS",
-        "quote_default": 60,
-        "traeger": "Land NRW / RVR / EGLV",
-        "hinweis": "Nur für Projekte im Ruhrgebiet / NRW relevant. In Niedersachsen nicht anwendbar.",
-    },
-}
+    return _GEBUEHREN.get(
+        gemeinde,
+        {
+            "satz": 0.0,
+            "status": "unbekannt",
+            "hinweis": "Kein Gebührensatz hinterlegt – Satzung der jeweiligen Kommune prüfen.",
+            "quelle": "https://www.service.niedersachsen.de/",
+        },
+    )
