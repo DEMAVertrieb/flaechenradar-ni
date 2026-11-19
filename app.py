@@ -1,8 +1,9 @@
 """
-FlächenRadar DE – Bundesweites Geben-und-Nehmen-Interface & Daten-Asset
-Version 5.0 (Radical Simple · Deutschlandweit · Strukturiertes Event-Schema)
+FlächenRadar DE – Bundesweites Geben-und-Nehmen-Interface & DSGVO-konformes Daten-Asset
+Version 5.1 (Zwei-Ebenen-Trennung Signal vs. Lead-Opt-in · Exakte Satzungs-Matches · Base64-Webhook)
 """
 
+import base64
 import json
 import os
 import re
@@ -12,6 +13,8 @@ from pathlib import Path
 
 import requests
 import streamlit as st
+
+from gebuehren import _GEBUEHREN, gebuehr
 
 st.set_page_config(
     page_title="FlächenRadar · Regenwasser-, Hitze- & Satzungs-Check",
@@ -34,10 +37,9 @@ CRM_WEBHOOK_URL = get_secret("CRM_WEBHOOK_URL", "")
 APP_PASSWORD = get_secret("APP_PASSWORD", "")
 
 DATA_DIR = Path("data")
-UPLOAD_DIR = DATA_DIR / "uploads"
-EVENTS_FILE = DATA_DIR / "events_log.jsonl"
+EVENTS_FILE = DATA_DIR / "signals_log.jsonl"
+LEADS_FILE = DATA_DIR / "leads_optin_log.jsonl"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def plz_zu_bundesland(plz: str) -> str:
@@ -48,7 +50,7 @@ def plz_zu_bundesland(plz: str) -> str:
     p3 = int(plz[:3])
     if p2 in (1, 2, 4, 8, 9):
         return "Sachsen"
-    if p2 in (3, 15, 16) or (144 <= p3 <= 149) or (193 <= p3 <= 193):
+    if p2 in (3, 15, 16) or (144 <= p3 <= 149) or p3 == 193:
         return "Brandenburg"
     if 10 <= p2 <= 14:
         return "Berlin"
@@ -68,7 +70,7 @@ def plz_zu_bundesland(plz: str) -> str:
         return "Nordrhein-Westfalen"
     if (34 <= p2 <= 36) or (60 <= p2 <= 65):
         return "Hessen"
-    if (54 <= p2 <= 56) or (66 <= p2 <= 67):
+    if (54 <= p2 <= 56) or p2 == 67:
         return "Rheinland-Pfalz"
     if p2 == 66:
         return "Saarland"
@@ -81,31 +83,25 @@ def plz_zu_bundesland(plz: str) -> str:
     return "Deutschland (Sonstige)"
 
 
+def finde_ort_satzung(ort_input: str) -> tuple[str, dict | None]:
+    """Prüft flexibel, ob für den eingegebenen Ort bereits ein verifizierter Satzungseintrag existiert."""
+    clean = (ort_input or "").strip().lower()
+    if not clean:
+        return "", None
+    for key, val in _GEBUEHREN.items():
+        base = key.split(",")[0].split("(")[0].strip().lower()
+        if clean == key.lower() or clean == base or base in clean:
+            return key, val
+    return ort_input.strip(), None
+
+
 ANLIEGEN_MAP = {
-    "gebuehren_pruefen": {
-        "label": "💧 Regenwassergebühr & Satzung prüfen",
-        "kurz": "Gebührenlast & Einsparpotenzial durch Entkopplung einordnen",
-    },
-    "entsiegelung_wasserdurchlaessig": {
-        "label": "🧱 Entsiegelung & wasserdurchlässige Fläche",
-        "kurz": "Parkplatz, Hof, Weg oder Zufahrt versickerungsfähig gestalten",
-    },
-    "starkregen_schwammstadt": {
-        "label": "🌊 Starkregen & Schwammstadt-Rückhalt",
-        "kurz": "Überflutungsschutz und Regenwasserspeicherung vor Ort",
-    },
-    "hitzeinsel_mikroklima": {
-        "label": "🌡️ Hitzeinsel & Aufheizung reduzieren",
-        "kurz": "Kühlung und Mikroklima auf Gewerbe-, Kommunal- oder Privatflächen",
-    },
-    "bplan_baugenehmigung": {
-        "label": "📐 Bebauungsplan & Bauauflagen",
-        "kurz": "Vorgaben zu Versickerung, Rückhaltung und Begrünung erfüllen",
-    },
-    "satzung_hochladen": {
-        "label": "📄 Kommunale Satzung / B-Plan hochladen",
-        "kurz": "Aktuelle Abwassersatzung, Amtsblatt oder B-Plan einreichen",
-    },
+    "gebuehren_pruefen": "💧 Regenwassergebühr & Satzung prüfen",
+    "entsiegelung_wasserdurchlaessig": "🧱 Entsiegelung & wasserdurchlässige Fläche",
+    "starkregen_schwammstadt": "🌊 Starkregen & Schwammstadt-Rückhalt",
+    "hitzeinsel_mikroklima": "🌡️ Hitzeinsel & Aufheizung reduzieren",
+    "bplan_baugenehmigung": "📐 Bebauungsplan & Bauauflagen",
+    "satzung_hochladen": "📄 Kommunale Satzung / B-Plan hochladen",
 }
 
 NUTZUNGSARTEN = [
@@ -119,52 +115,111 @@ NUTZUNGSARTEN = [
 ss = st.session_state
 for k, v in {
     "session_id": f"SES-{uuid.uuid4().hex[:10].upper()}",
-    "last_event": None,
+    "last_signal": None,
     "last_mehrwert": None,
+    "last_lead_id": None,
 }.items():
     ss.setdefault(k, v)
 
 
-def speichere_event(event_data: dict) -> dict:
-    """Speichert jedes Signal im verbindlichen Daten-Schema (JSONL + optional Webhook)."""
+def sende_an_webhook(payload: dict):
+    if CRM_WEBHOOK_URL:
+        try:
+            requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8)
+        except Exception:
+            pass
+
+
+def speichere_signal_anonym(data: dict) -> dict:
+    """Ebene 1 (Art. 6 Abs. 1 lit. f DSGVO): Rein strukturierte, anonyme Marktsignale ohne Personenbezug."""
     record = {
-        "event_id": f"EVT-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}",
+        "record_type": "signal",
+        "event_id": f"SIG-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "bundesland": event_data.get("bundesland", "Unbekannt"),
-        "region_landkreis": event_data.get("region_landkreis", ""),
-        "ort": event_data.get("ort", ""),
-        "plz": event_data.get("plz", ""),
-        "anliegen": event_data.get("anliegen", ""),
-        "flaeche_m2": event_data.get("flaeche_m2"),
-        "nutzungsart": event_data.get("nutzungsart", ""),
-        "satzung_hochgeladen": bool(event_data.get("satzung_hochgeladen", False)),
-        "datei_referenz": event_data.get("datei_referenz", ""),
-        "interesse_signal": event_data.get("interesse_signal", "unbekannt"),
-        "kontakt": event_data.get("kontakt", ""),
-        "notiz": event_data.get("notiz", ""),
-        "quelle": event_data.get("quelle", "oeffentlich"),
+        "bundesland": data.get("bundesland", "Unbekannt"),
+        "ort": data.get("ort", ""),
+        "plz": data.get("plz", ""),
+        "anliegen": data.get("anliegen", ""),
+        "flaeche_m2": data.get("flaeche_m2"),
+        "nutzungsart": data.get("nutzungsart", ""),
+        "satzung_hochgeladen": bool(data.get("satzung_hochgeladen", False)),
+        "dateiname": data.get("dateiname", ""),
+        "datei_base64": data.get("datei_base64", ""),
+        "satzung_link": data.get("satzung_link", ""),
+        "interesse_signal": data.get("interesse_signal", "unbekannt"),
+        "quelle": "oeffentlich",
         "session_id": ss.session_id,
     }
+    # Lokal nur Metadaten ohne Base64-Blob speichern, Webhook erhält komplettes Dokument
+    local_record = {k: v for k, v in record.items() if k != "datei_base64"}
     try:
         with EVENTS_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(local_record, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
-    if CRM_WEBHOOK_URL:
-        try:
-            requests.post(CRM_WEBHOOK_URL, json=record, timeout=6)
-        except Exception:
-            pass
-    return record
+    sende_an_webhook(record)
+    return local_record
+
+
+def speichere_lead_optin(signal_id: str, data: dict) -> dict:
+    """Ebene 2 (Art. 6 Abs. 1 lit. a DSGVO): Getrennte Speicherung nur bei aktiver Opt-in-Einwilligung."""
+    lead = {
+        "record_type": "lead_optin",
+        "lead_id": f"LEAD-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4].upper()}",
+        "linked_signal_id": signal_id,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "bundesland": data.get("bundesland", ""),
+        "ort": data.get("ort", ""),
+        "plz": data.get("plz", ""),
+        "anliegen": data.get("anliegen", ""),
+        "flaeche_m2": data.get("flaeche_m2"),
+        "nutzungsart": data.get("nutzungsart", ""),
+        "kontakt": data.get("kontakt", ""),
+        "notiz": data.get("notiz", ""),
+        "dsgvo_optin": True,
+    }
+    try:
+        with LEADS_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(lead, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+    sende_an_webhook(lead)
+    return lead
 
 
 def generiere_mehrwert(bundesland: str, ort: str, anliegen: str, flaeche: int, nutzung: str) -> dict:
-    """Liefert sofortigen, ehrlichen Mehrwert passend zu Region, Anliegen und Fläche."""
-    ort_txt = ort.strip() or bundesland
+    """Liefert sofortigen Mehrwert – nutzt verifizierte Satzungsdaten falls vorhanden, sonst bundesweite Einordnung."""
+    matched_name, satz_info = finde_ort_satzung(ort)
+    ort_txt = matched_name or ort.strip() or bundesland
     fl_txt = f"ca. {flaeche:,} m²".replace(",", ".") if flaeche and flaeche > 0 else "Ihre Fläche"
 
     if anliegen == "gebuehren_pruefen":
+        if satz_info and float(satz_info.get("satz", 0)) > 0:
+            exakt_satz = float(satz_info["satz"])
+            last_10j = round(flaeche * exakt_satz * 10) if flaeche else 0
+            last_1j = round(flaeche * exakt_satz) if flaeche else 0
+            kosten_txt = (
+                f"Für **{ort_txt}** ist ein Satzungs-Richtwert von **{exakt_satz:.2f} €/m²·a** hinterlegt. ".replace(".", ",")
+                + (
+                    f"Bei {fl_txt} entspricht das einer Gebührenlast von **ca. {last_1j:,} € pro Jahr** bzw. "
+                    f"**ca. {last_10j:,} € über 10 Jahre**.".replace(",", ".")
+                    if flaeche
+                    else ""
+                )
+            )
+            return {
+                "titel": f"Satzungs- & Gebühren-Check für {ort_txt} ({bundesland})",
+                "text": (
+                    f"{kosten_txt}\n\n"
+                    f"**Satzungsgrundlage:** {satz_info.get('satzung_titel', '')}\n"
+                    f"{satz_info.get('hinweis', '')}\n\n"
+                    "**Wert- statt Kostenperspektive:** Durch wasserdurchlässige Gestaltung oder Abkopplung vom Kanalnetz "
+                    "reduziert sich die abflusswirksame Fläche dauerhaft – gleichzeitig steigt die Starkregensicherheit des Grundstücks."
+                ),
+            }
+
         spanne_unten = round(flaeche * 0.35 * 10) if flaeche else 0
         spanne_oben = round(flaeche * 1.40 * 10) if flaeche else 0
         hinweis_10j = (
@@ -181,7 +236,8 @@ def generiere_mehrwert(bundesland: str, ort: str, anliegen: str, flaeche: int, n
                 "1. **Abflussbeiwert / Ermäßigung prüfen:** Viele Abwassersatzungen reduzieren die Gebühr um 50 % bis 100 %, "
                 "wenn Flächen dauerhaft wasserdurchlässig ausgeführt oder vom Kanalnetz abgekoppelt werden.\n"
                 "2. **Aktuelle Satzungsänderungen beachten:** Zahlreiche Kommunen führen die gesplittete Gebühr neu ein oder passen Sätze an.\n"
-                "3. **Nächster Schritt:** Abwassersatzung der Kommune (Stichwort *Niederschlagswassergebühr / versiegelte Fläche*) prüfen."
+                "3. **Tipp:** Falls Ihnen die aktuelle Abwassersatzung für Ihren Ort vorliegt, können Sie diese direkt über "
+                "*„Kommunale Satzung / B-Plan hochladen“* einreichen."
             ),
         }
 
@@ -227,6 +283,7 @@ def generiere_mehrwert(bundesland: str, ort: str, anliegen: str, flaeche: int, n
         }
 
     if anliegen == "bplan_baugenehmigung":
+        extra_bplan = f"\n\n**Hinterlegter Hinweis zu {ort_txt}:** {satz_info['hinweis']}" if satz_info else ""
         return {
             "titel": f"Bebauungsplan & Bauauflagen in {ort_txt} ({bundesland})",
             "text": (
@@ -234,7 +291,7 @@ def generiere_mehrwert(bundesland: str, ort: str, anliegen: str, flaeche: int, n
                 "Grundstück versickert oder zurückgehalten werden muss und Vollversiegelungen begrenzt sind.\n\n"
                 "**Checkliste für Bauherren & Planer:**\n"
                 "1. **GRZ / Versiegelungsgrad prüfen:** Wasserdurchlässige Beläge werden je nach Satzung oft günstiger angerechnet.\n"
-                "2. **Entwässerungsantrag:** Versickerungsnachweis (z. B. nach DWA-A 138) frühzeitig mit der Kommune abstimmen."
+                f"2. **Entwässerungsantrag:** Versickerungsnachweis (z. B. nach DWA-A 138) frühzeitig mit der Kommune abstimmen.{extra_bplan}"
             ),
         }
 
@@ -286,68 +343,100 @@ with st.form("radar_quick_form", clear_on_submit=False):
     anliegen_key = st.selectbox(
         "Worum geht es konkret? *",
         list(ANLIEGEN_MAP.keys()),
-        format_func=lambda k: ANLIEGEN_MAP[k]["label"],
+        format_func=lambda k: ANLIEGEN_MAP[k],
     )
 
     c3, c4 = st.columns([1, 1.4])
     flaeche_m2 = c3.number_input("Grobe Fläche in m² (optional)", min_value=0, max_value=500000, value=0, step=50)
     nutzungsart = c4.selectbox("Flächennutzung (optional)", NUTZUNGSARTEN)
 
+    satzung_link = st.text_input(
+        "Optional: Link zu einer kommunalen Satzung / einem Bebauungsplan",
+        placeholder="https://www.gemeinde.de/...",
+    )
     uploaded_file = st.file_uploader(
-        "Optional: Satzung, Bebauungsplan, Lageplan oder Foto hochladen (PDF, JPG, PNG)",
+        "Optional: Öffentliche Satzung, B-Plan oder Flächenfoto hochladen (PDF, JPG, PNG · max. 5 MB)",
         type=["pdf", "jpg", "jpeg", "png"],
     )
 
-    with st.expander("Optional: Rückmeldung oder technische Einschätzung gewünscht?"):
+    with st.expander("Optional: Unverbindliche Rückmeldung / Machbarkeitsprüfung gewünscht?"):
         interesse_wahl = st.radio(
-            "Besteht Interesse an einer unverbindlichen Vertiefung / Machbarkeitsprüfung?",
-            ["Keine Rückmeldung nötig (nur Info nutzen)", "Ja, unverbindliche Rückmeldung erwünscht"],
+            "Besteht Interesse an einer fachlichen Rückmeldung?",
+            ["Nein, nur kostenfreie Info nutzen", "Ja, unverbindliche Rückmeldung erwünscht"],
             index=0,
         )
-        kontakt_info = st.text_input("E-Mail oder Telefon (nur falls Rückmeldung gewünscht)")
-        notiz_info = st.text_input("Kurzer Hinweis oder Link zur Satzung (optional)")
+        kontakt_info = st.text_input("E-Mail oder Telefon (nur bei gewünschter Rückmeldung)")
+        notiz_info = st.text_input("Kurze Anmerkung zum Vorhaben (optional)")
+        dsgvo_consent = st.checkbox(
+            "Ich willige ein, dass meine Kontaktdaten zur Bearbeitung meiner Anfrage und für eine "
+            "unverbindliche Rückmeldung verarbeitet werden (Art. 6 Abs. 1 lit. a DSGVO). Widerruf jederzeit möglich."
+        )
 
     submitted = st.form_submit_button("Auswertung anzeigen", type="primary")
 
 if submitted:
     plz_clean = (plz or "").strip()
+    wants_contact = interesse_wahl.startswith("Ja") or bool((kontakt_info or "").strip())
+
     if not re.fullmatch(r"\d{5}", plz_clean):
         st.error("Bitte eine gültige 5-stellige deutsche Postleitzahl eingeben.")
+    elif wants_contact and not (kontakt_info or "").strip():
+        st.error("Bitte E-Mail oder Telefonnummer angeben, wenn eine Rückmeldung gewünscht ist.")
+    elif wants_contact and not dsgvo_consent:
+        st.error("Bitte bestätigen Sie die Einwilligung (Checkbox), damit wir Ihre Kontaktdaten verarbeiten dürfen.")
     else:
         bundesland = plz_zu_bundesland(plz_clean)
-        datei_ref = ""
+        datei_name = ""
+        datei_b64 = ""
         if uploaded_file is not None:
-            safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", uploaded_file.name)
-            datei_ref = f"{datetime.now():%Y%m%d_%H%M%S}_{plz_clean}_{safe_name}"
-            try:
-                (UPLOAD_DIR / datei_ref).write_bytes(uploaded_file.getvalue())
-            except Exception:
-                pass
+            raw_bytes = uploaded_file.getvalue()
+            if len(raw_bytes) <= 5 * 1024 * 1024:
+                datei_name = re.sub(r"[^a-zA-Z0-9._-]", "_", uploaded_file.name)
+                datei_b64 = base64.b64encode(raw_bytes).decode("ascii")
+            else:
+                st.warning("Datei größer als 5 MB – Metadaten wurden erfasst, bitte Datei ggf. per Link einreichen.")
 
-        interesse_signal = "ja" if interesse_wahl.startswith("Ja") else ("unbekannt" if not kontakt_info else "ja")
-        evt = speichere_event(
+        # Ebene 1: Immer anonymes Struktur-Signal erfassen (Art. 6 Abs. 1 lit. f DSGVO)
+        sig = speichere_signal_anonym(
             {
                 "bundesland": bundesland,
-                "region_landkreis": "",
                 "ort": (ort or "").strip(),
                 "plz": plz_clean,
                 "anliegen": anliegen_key,
                 "flaeche_m2": int(flaeche_m2) if flaeche_m2 > 0 else None,
                 "nutzungsart": "" if nutzungsart == "Keine Angabe" else nutzungsart,
-                "satzung_hochgeladen": bool(uploaded_file is not None or anliegen_key == "satzung_hochladen"),
-                "datei_referenz": datei_ref,
-                "interesse_signal": interesse_signal,
-                "kontakt": (kontakt_info or "").strip(),
-                "notiz": (notiz_info or "").strip(),
-                "quelle": "oeffentlich",
+                "satzung_hochgeladen": bool(uploaded_file is not None or satzung_link.strip() or anliegen_key == "satzung_hochladen"),
+                "dateiname": datei_name,
+                "datei_base64": datei_b64,
+                "satzung_link": (satzung_link or "").strip(),
+                "interesse_signal": "ja" if wants_contact else "unbekannt",
             }
         )
-        ss.last_event = evt
+        ss.last_signal = sig
         ss.last_mehrwert = generiere_mehrwert(bundesland, ort, anliegen_key, int(flaeche_m2), nutzungsart)
 
-if ss.last_mehrwert and ss.last_event:
+        # Ebene 2: Nur bei explizitem Opt-in getrennten Lead-Datensatz anlegen (Art. 6 Abs. 1 lit. a DSGVO)
+        if wants_contact and dsgvo_consent:
+            lead = speichere_lead_optin(
+                sig["event_id"],
+                {
+                    "bundesland": bundesland,
+                    "ort": (ort or "").strip(),
+                    "plz": plz_clean,
+                    "anliegen": anliegen_key,
+                    "flaeche_m2": int(flaeche_m2) if flaeche_m2 > 0 else None,
+                    "nutzungsart": "" if nutzungsart == "Keine Angabe" else nutzungsart,
+                    "kontakt": (kontakt_info or "").strip(),
+                    "notiz": (notiz_info or "").strip(),
+                },
+            )
+            ss.last_lead_id = lead["lead_id"]
+        else:
+            ss.last_lead_id = None
+
+if ss.last_mehrwert and ss.last_signal:
     mw = ss.last_mehrwert
-    ev = ss.last_event
+    ev = ss.last_signal
     st.markdown(
         f"""
 <div class="result-card">
@@ -358,25 +447,37 @@ if ss.last_mehrwert and ss.last_event:
         unsafe_allow_html=True,
     )
     st.markdown(mw["text"])
-    st.caption(f"Vorgangskennung: {ev['event_id']} · Unverbindliche Erstorientierung.")
+    if ss.last_lead_id:
+        st.success(f"Rückmeldung angefordert (Vorgang: {ss.last_lead_id}). Wir melden uns zeitnah bei Ihnen.")
+    st.caption(f"Analyse-Kennung: {ev['event_id']} · Unverbindliche Erstorientierung.")
 
 st.divider()
-with st.expander("Hinweise & Daten-Export (Admin)"):
-    st.caption(
-        "Unabhängige Erstorientierung zu Oberflächenwassermanagement, Entsiegelung, Schwammstadt und kommunalen Satzungen "
-        "in Deutschland. Ersetzt keine Fachplanung oder verbindliche Rechtsauskunft."
+with st.expander("Datenschutz, Quellen & Admin-Export"):
+    st.markdown(
+        """
+**Datenschutzhinweis (DSGVO):**
+- **Anonyme Nutzungs- & Marktanalyse (Art. 6 Abs. 1 lit. f DSGVO):** Zur Verbesserung des Informationsangebots und zur regionalen Einordnung von Nachfrage- und Satzungstrends speichern wir nicht-personenbezogene Strukturdaten (PLZ, Ort, Anliegen, Flächengröße, Nutzungsart, hochgeladene öffentliche Satzungen) ohne Namen, E-Mail-Adressen oder IP-Adressen. Speicherdauer: max. 24 Monate.
+- **Freiwillige Kontaktaufnahme (Art. 6 Abs. 1 lit. a DSGVO):** Personenbezogene Kontaktdaten werden ausschließlich dann erhoben und getrennt verarbeitet, wenn Sie ausdrücklich eine Rückmeldung anfordern und einwilligen.
+- **Hinweis:** Alle Berechnungen dienen der unverbindlichen Erstorientierung und ersetzen keine Fachplanung oder Rechtsberatung.
+"""
     )
     if APP_PASSWORD:
-        pw = st.text_input("Admin-Passwort", type="password", key="admin_pw_v5")
+        pw = st.text_input("Admin-Passwort", type="password", key="admin_pw_v51")
         if pw == APP_PASSWORD:
+            c_a, c_b = st.columns(2)
             if EVENTS_FILE.exists():
-                raw_jsonl = EVENTS_FILE.read_text(encoding="utf-8")
-                st.metric("Erfasste Events gesamt", len(raw_jsonl.strip().splitlines()) if raw_jsonl.strip() else 0)
-                st.download_button(
-                    "⬇ Alle Events als JSONL herunterladen",
-                    data=raw_jsonl.encode("utf-8"),
-                    file_name=f"flaechenradar_events_{datetime.now():%Y%m%d}.jsonl",
+                raw_sig = EVENTS_FILE.read_text(encoding="utf-8")
+                c_a.download_button(
+                    "⬇ Anonyme Signale (JSONL)",
+                    data=raw_sig.encode("utf-8"),
+                    file_name=f"signals_{datetime.now():%Y%m%d}.jsonl",
                     mime="application/json",
                 )
-            else:
-                st.info("Noch keine Events aufgezeichnet.")
+            if LEADS_FILE.exists():
+                raw_leads = LEADS_FILE.read_text(encoding="utf-8")
+                c_b.download_button(
+                    "⬇ Opt-in Leads (JSONL)",
+                    data=raw_leads.encode("utf-8"),
+                    file_name=f"leads_optin_{datetime.now():%Y%m%d}.jsonl",
+                    mime="application/json",
+                )
