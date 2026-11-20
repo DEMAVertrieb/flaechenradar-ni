@@ -118,16 +118,20 @@ for k, v in {
     "last_signal": None,
     "last_mehrwert": None,
     "last_lead_id": None,
+    "webhook_status": "bereit" if CRM_WEBHOOK_URL else "nicht konfiguriert",
 }.items():
     ss.setdefault(k, v)
 
 
 def sende_an_webhook(payload: dict):
-    if CRM_WEBHOOK_URL:
-        try:
-            requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8)
-        except Exception:
-            pass
+    if not CRM_WEBHOOK_URL:
+        ss["webhook_status"] = "nicht konfiguriert"
+        return
+    try:
+        resp = requests.post(CRM_WEBHOOK_URL, json=payload, timeout=8)
+        ss["webhook_status"] = f"HTTP {resp.status_code}" if resp.ok else f"Fehler (HTTP {resp.status_code})"
+    except Exception as exc:
+        ss["webhook_status"] = f"Verbindungsfehler ({type(exc).__name__})" 
 
 
 def speichere_signal_anonym(data: dict) -> dict:
@@ -451,6 +455,7 @@ if ss.last_mehrwert and ss.last_signal:
         st.success(f"Rückmeldung angefordert (Vorgang: {ss.last_lead_id}). Wir melden uns zeitnah bei Ihnen.")
     st.caption(f"Analyse-Kennung: {ev['event_id']} · Unverbindliche Erstorientierung.")
 
+st.caption(f"S21-Bridge: {ss.get('webhook_status', 'bereit')}")
 st.divider()
 with st.expander("Datenschutz, Quellen & Admin-Export"):
     st.markdown(
