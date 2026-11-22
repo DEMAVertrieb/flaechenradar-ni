@@ -486,3 +486,15 @@ with st.expander("Datenschutz, Quellen & Admin-Export"):
                     file_name=f"leads_optin_{datetime.now():%Y%m%d}.jsonl",
                     mime="application/json",
                 )
+
+st.markdown(
+    """
+<div style="margin-top:16px;padding:12px 14px;border-radius:10px;background:rgba(15,23,42,0.04);font-size:0.84rem;color:#475569;text-align:center;">
+  <strong>DEMA Vertrieb GbR</strong> · Regionaler Fachvertrieb für versickerungsfähige Flächensysteme (bema PU-Asphalt®)<br>
+  <a href="https://demavertrieb.com" target="_blank" rel="noopener">Startseite</a> ·
+  <a href="https://demavertrieb.com/impressum" target="_blank" rel="noopener">Impressum</a> ·
+  <a href="https://demavertrieb.com/datenschutz" target="_blank" rel="noopener">Datenschutz</a>
+</div>
+""",
+    unsafe_allow_html=True,
+)
